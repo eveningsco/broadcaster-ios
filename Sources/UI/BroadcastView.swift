@@ -1,0 +1,182 @@
+import SwiftUI
+
+struct BroadcastView: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject var broadcast: BroadcastController
+    var title = "Go Live"
+    @State private var listeners: Int?
+    @State private var now = Date()
+
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(spacing: 32) {
+            header
+
+            statusBadge
+
+            if case .live(let since) = broadcast.state {
+                Text(elapsed(since: since))
+                    .font(.system(.largeTitle, design: .monospaced).weight(.medium))
+                if let listeners {
+                    Label("\(listeners) listening", systemImage: "ear")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            SegmentedLevelMeter(levelDb: broadcast.levelDb)
+                .frame(height: 14)
+                .padding(.horizontal, 8)
+
+            liveButton
+
+            if let error = broadcast.lastError, case .reconnecting = broadcast.state {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            Spacer()
+            Spacer()
+        }
+        .padding(24)
+        .onReceive(ticker) { date in
+            now = date
+        }
+        .task(id: broadcast.state.isActive) {
+            guard broadcast.state.isActive else {
+                listeners = nil
+                return
+            }
+            while !Task.isCancelled {
+                if let status = await model.fetchStatus() {
+                    listeners = status.listeners
+                }
+                try? await Task.sleep(nanoseconds: UInt64(Config.statusPollInterval * 1_000_000_000))
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(title)
+                    .font(.headline)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.15), value: title)
+                if let slug = model.credentials?.station?.slug {
+                    Text("evenings.fm/\(slug)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        switch broadcast.state {
+        case .idle:
+            Label("Offline", systemImage: "circle.fill")
+                .foregroundStyle(.secondary)
+        case .connecting:
+            Label("Connecting…", systemImage: "antenna.radiowaves.left.and.right")
+                .foregroundStyle(.orange)
+        case .live:
+            Label("LIVE", systemImage: "dot.radiowaves.left.and.right")
+                .font(.headline)
+                .foregroundStyle(.red)
+        case .reconnecting(let attempt):
+            Label("Reconnecting (attempt \(attempt))…", systemImage: "arrow.clockwise")
+                .foregroundStyle(.orange)
+        case .stopping:
+            Label("Stopping…", systemImage: "stop.circle")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var liveButton: some View {
+        Button {
+            if broadcast.state.isActive {
+                broadcast.stop()
+            } else {
+                Task {
+                    model.player.stop()
+                    await model.ensureFreshSession()
+                    guard let key = model.credentials?.streamKey else { return }
+                    broadcast.start(streamKey: key)
+                }
+            }
+        } label: {
+            Text(broadcast.state.isActive ? "End Broadcast" : "Go Live")
+                .font(.title3.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(broadcast.state.isActive ? .gray : .red)
+        .disabled(broadcast.state == .stopping)
+    }
+
+    private func elapsed(since: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(since)))
+        let h = seconds / 3600
+        let m = (seconds % 3600) / 60
+        let s = seconds % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%02d:%02d", m, s)
+    }
+}
+
+/// Segmented RMS meter spanning -60 dB to 0 dB with green/yellow/red zones and
+/// a decaying peak-hold notch.
+struct SegmentedLevelMeter: View {
+    let levelDb: Float
+    @State private var peak: CGFloat = 0
+
+    private let segmentCount = 28
+
+    var body: some View {
+        let fraction = CGFloat(max(0, min(1, (levelDb + 60) / 60)))
+
+        GeometryReader { geometry in
+            HStack(spacing: 3) {
+                ForEach(0..<segmentCount, id: \.self) { index in
+                    let threshold = CGFloat(index + 1) / CGFloat(segmentCount)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(segmentColor(threshold: threshold, lit: fraction >= threshold))
+                }
+            }
+            .overlay(alignment: .leading) {
+                if peak > 0.02 {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(Color.primary.opacity(0.6))
+                        .frame(width: 2)
+                        .offset(x: peak * geometry.size.width - 1)
+                }
+            }
+        }
+        .onChange(of: fraction) { newValue in
+            if newValue > peak {
+                peak = newValue
+            }
+        }
+        .task {
+            // Let the peak notch fall slowly back down.
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                peak = max(0, peak - 0.008)
+            }
+        }
+    }
+
+    private func segmentColor(threshold: CGFloat, lit: Bool) -> Color {
+        guard lit else { return Color.primary.opacity(0.08) }
+        if threshold > 0.9 { return .red }
+        if threshold > 0.72 { return .yellow }
+        return .green
+    }
+}

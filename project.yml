@@ -1,0 +1,33 @@
+name: EveningsBroadcaster
+options:
+  bundleIdPrefix: co.evenings
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  HaishinKit:
+    url: https://github.com/HaishinKit/HaishinKit.swift
+    from: "2.0.0"
+targets:
+  EveningsBroadcaster:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - package: HaishinKit
+        product: HaishinKit
+      - package: HaishinKit
+        product: RTMPHaishinKit
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: Evenings
+        NSMicrophoneUsageDescription: Evenings uses the microphone to broadcast live audio to your station.
+        UIBackgroundModes: [audio]
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1"
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "0.1.0"
