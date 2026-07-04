@@ -21,7 +21,7 @@ final class TrackPlayer: ObservableObject {
         toggle(url: stream.streamURL, key: Self.key(for: stream))
     }
 
-    private func toggle(url: URL?, key: String) {
+    func toggle(url: URL?, key: String) {
         if playingKey == key {
             stop()
             return

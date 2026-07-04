@@ -44,6 +44,8 @@ struct HomeView: View {
             ZStack(alignment: .top) {
                 BroadcastView(
                     broadcast: model.broadcast,
+                    recorder: model.recorder,
+                    uploads: model.uploads,
                     title: isCollapsedLook ? "Go Live" : sheetTab.rawValue
                 )
                     .padding(.bottom, peekHeight)
@@ -82,6 +84,13 @@ struct HomeView: View {
                     Task { await model.refreshLibraryAfterBroadcast() }
                 }
             }
+            // A recording upload just landed in the library — show it.
+            .onReceive(model.uploads.$lastUploadCompletedAt) { completedAt in
+                if completedAt != nil {
+                    libraryExpanded = true
+                    sheetTab = .library
+                }
+            }
         }
     }
 
@@ -98,7 +107,7 @@ struct HomeView: View {
             .padding(.bottom, 8)
 
             if sheetTab == .library {
-                LibraryListView()
+                LibraryListView(uploads: model.uploads)
             } else {
                 ExploreListView()
             }

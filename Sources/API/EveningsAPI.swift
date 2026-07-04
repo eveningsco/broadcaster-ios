@@ -85,6 +85,25 @@ struct ExploreStream: Codable, Identifiable, Equatable {
     }
 }
 
+final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate {
+    private let onProgress: (Double) -> Void
+
+    init(onProgress: @escaping (Double) -> Void) {
+        self.onProgress = onProgress
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didSendBodyData bytesSent: Int64,
+        totalBytesSent: Int64,
+        totalBytesExpectedToSend: Int64
+    ) {
+        guard totalBytesExpectedToSend > 0 else { return }
+        onProgress(Double(totalBytesSent) / Double(totalBytesExpectedToSend))
+    }
+}
+
 enum APIError: LocalizedError {
     case invalidCredentials
     case server(status: Int, message: String?)
@@ -153,6 +172,67 @@ struct EveningsAPI {
     /// Channels currently on air across the platform.
     func exploreStreams(accessToken: String) async throws -> [ExploreStream] {
         try await authorizedGet(path: "/v1/explore/streams", queryItems: [], accessToken: accessToken)
+    }
+
+    struct UploadedTrack: Codable {
+        let id: Int
+    }
+
+    /// Multipart upload to the library. The multipart body is assembled in a
+    /// temp file and streamed, so hour-long recordings never sit in memory.
+    func uploadTrack(
+        fileURL: URL,
+        accessToken: String,
+        onProgress: @escaping (Double) -> Void
+    ) async throws -> UploadedTrack {
+        let boundary = "evenings-\(UUID().uuidString)"
+        var request = URLRequest(url: baseURL.appendingPathComponent("/v1/tracks"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        let bodyURL = try assembleMultipartBody(fileURL: fileURL, boundary: boundary)
+        defer { try? FileManager.default.removeItem(at: bodyURL) }
+
+        let delegate = UploadProgressDelegate(onProgress: onProgress)
+        let (data, response) = try await session.upload(for: request, fromFile: bodyURL, delegate: delegate)
+        try check(response: response, data: data)
+        return try decoder.decode(UploadedTrack.self, from: data)
+    }
+
+    func updateTrackTitle(id: Int, title: String, accessToken: String) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("/v1/tracks/\(id)"))
+        request.httpMethod = "PATCH"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["title": title])
+        let (data, response) = try await session.data(for: request)
+        try check(response: response, data: data)
+    }
+
+    private func assembleMultipartBody(fileURL: URL, boundary: String) throws -> URL {
+        let bodyURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("upload-\(UUID().uuidString).tmp")
+
+        let filename = fileURL.lastPathComponent
+        var prefix = "--\(boundary)\r\n"
+        prefix += "Content-Disposition: form-data; name=\"audio\"; filename=\"\(filename)\"\r\n"
+        prefix += "Content-Type: audio/mp4\r\n\r\n"
+        let suffix = "\r\n--\(boundary)--\r\n"
+
+        FileManager.default.createFile(atPath: bodyURL.path, contents: nil)
+        let writer = try FileHandle(forWritingTo: bodyURL)
+        defer { try? writer.close() }
+        try writer.write(contentsOf: Data(prefix.utf8))
+
+        let reader = try FileHandle(forReadingFrom: fileURL)
+        defer { try? reader.close() }
+        while let chunk = try reader.read(upToCount: 1 << 20), !chunk.isEmpty {
+            try writer.write(contentsOf: chunk)
+        }
+
+        try writer.write(contentsOf: Data(suffix.utf8))
+        return bodyURL
     }
 
     private func authorizedGet<T: Decodable>(

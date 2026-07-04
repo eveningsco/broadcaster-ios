@@ -1,17 +1,38 @@
 import SwiftUI
 
 struct BroadcastView: View {
+    enum StageMode: String, CaseIterable {
+        case live = "Live"
+        case record = "Record"
+    }
+
     @EnvironmentObject private var model: AppModel
     @ObservedObject var broadcast: BroadcastController
+    @ObservedObject var recorder: RecordingController
+    @ObservedObject var uploads: UploadManager
     var title = "Go Live"
+    @State private var mode: StageMode = .live
     @State private var listeners: Int?
     @State private var now = Date()
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
+    private var isBusy: Bool {
+        broadcast.state.isActive || recorder.state.isRecording
+    }
+
     var body: some View {
         VStack(spacing: 32) {
             header
+
+            Picker("", selection: $mode) {
+                ForEach(StageMode.allCases, id: \.self) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 220)
+            .disabled(isBusy)
 
             statusBadge
 
@@ -22,16 +43,45 @@ struct BroadcastView: View {
                     Label("\(listeners) listening", systemImage: "ear")
                         .foregroundStyle(.secondary)
                 }
+            } else if case .recording(let since) = recorder.state {
+                Text(elapsed(since: since))
+                    .font(.system(.largeTitle, design: .monospaced).weight(.medium))
             }
 
             SegmentedLevelMeter(levelDb: broadcast.levelDb)
                 .frame(height: 14)
                 .padding(.horizontal, 8)
 
-            liveButton
+            if mode == .live {
+                liveButton
+            } else {
+                recordButton
+            }
+
+            if uploads.uploadingDraftId != nil {
+                VStack(spacing: 6) {
+                    ProgressView(value: uploads.uploadProgress)
+                    Text("Saving to your library…")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+            } else if let uploadError = uploads.uploadError, mode == .record {
+                Text("Saved on this phone — upload from the library when you're back online. (\(uploadError))")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
 
             if let error = broadcast.lastError, case .reconnecting = broadcast.state {
                 Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            if let recorderError = recorder.lastError, mode == .record {
+                Text(recorderError)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -77,9 +127,20 @@ struct BroadcastView: View {
 
     @ViewBuilder
     private var statusBadge: some View {
+        if recorder.state.isRecording {
+            Label("RECORDING", systemImage: "record.circle.fill")
+                .font(.headline)
+                .foregroundStyle(.red)
+        } else {
+            broadcastBadge
+        }
+    }
+
+    @ViewBuilder
+    private var broadcastBadge: some View {
         switch broadcast.state {
         case .idle:
-            Label("Offline", systemImage: "circle.fill")
+            Label(mode == .record ? "Ready to record" : "Offline", systemImage: "circle.fill")
                 .foregroundStyle(.secondary)
         case .connecting:
             Label("Connecting…", systemImage: "antenna.radiowaves.left.and.right")
@@ -118,6 +179,30 @@ struct BroadcastView: View {
         .buttonStyle(.borderedProminent)
         .tint(broadcast.state.isActive ? .gray : .red)
         .disabled(broadcast.state == .stopping)
+    }
+
+    private var recordButton: some View {
+        Button {
+            if recorder.state.isRecording {
+                if let url = recorder.stop() {
+                    model.handleFinishedRecording(url)
+                }
+            } else {
+                model.player.stop()
+                recorder.start()
+            }
+        } label: {
+            Label(
+                recorder.state.isRecording ? "Stop Recording" : "Record",
+                systemImage: recorder.state.isRecording ? "stop.fill" : "record.circle"
+            )
+            .font(.title3.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(recorder.state.isRecording ? .gray : .red)
+        .disabled(broadcast.state.isActive)
     }
 
     private func elapsed(since: Date) -> String {

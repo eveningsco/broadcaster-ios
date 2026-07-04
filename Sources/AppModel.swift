@@ -28,10 +28,34 @@ final class AppModel: ObservableObject {
 
     let broadcast = BroadcastController()
     let player = TrackPlayer()
+    let recorder: RecordingController
+    let uploads = UploadManager()
     private let api = EveningsAPI()
 
     init() {
         credentials = Keychain.load()
+        recorder = RecordingController(broadcast: broadcast)
+        uploads.freshAccessToken = { [weak self] in
+            await self?.ensureFreshSession()
+            return self?.credentials?.accessToken
+        }
+        recorder.onAutoStopped = { [weak self] url in
+            if let url {
+                self?.handleFinishedRecording(url)
+            }
+        }
+        uploads.loadDrafts()
+    }
+
+    /// A recording just ended: register it as a draft and try to upload it.
+    func handleFinishedRecording(_ url: URL) {
+        uploads.loadDrafts()
+        guard let draft = uploads.drafts.first(where: { $0.url == url }) else { return }
+        Task {
+            if await uploads.upload(draft) {
+                await refreshLibraryAfterBroadcast()
+            }
+        }
     }
 
     var isLoggedIn: Bool { credentials != nil }
@@ -65,6 +89,7 @@ final class AppModel: ObservableObject {
     }
 
     func logout() {
+        _ = recorder.stop()
         broadcast.stop()
         player.stop()
         Keychain.clear()

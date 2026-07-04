@@ -4,6 +4,27 @@ import Foundation
 import HaishinKit
 import RTMPHaishinKit
 
+/// Thread-safe holder for an audio-thread buffer consumer (the recording file
+/// writer). The tap callback runs on the audio thread; the sink is installed
+/// and removed from the main actor.
+final class AudioSinkBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sink: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
+
+    func set(_ newSink: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?) {
+        lock.lock()
+        sink = newSink
+        lock.unlock()
+    }
+
+    func send(_ buffer: AVAudioPCMBuffer, _ when: AVAudioTime) {
+        lock.lock()
+        let current = sink
+        lock.unlock()
+        current?(buffer, when)
+    }
+}
+
 enum BroadcastState: Equatable {
     case idle
     case connecting
@@ -37,6 +58,32 @@ final class BroadcastController: ObservableObject {
     private var sessionTask: Task<Void, Never>?
     private var streamKey = ""
     private var isMonitoring = false
+    private var observersInstalled = false
+    // External consumers (the recorder) that need capture to stay alive even
+    // when monitoring would otherwise stop (e.g. the library sheet expanding).
+    private var captureHolds = 0
+
+    /// Buffers fan out here on the audio thread (recording file writer).
+    let bufferSink = AudioSinkBox()
+
+    var captureFormat: AVAudioFormat {
+        engine.inputNode.outputFormat(forBus: 0)
+    }
+
+    /// Keep capture running regardless of monitoring state (recorder holds
+    /// this while a recording is in progress).
+    func retainCapture() throws {
+        try configureAudioSession()
+        try startCapture()
+        captureHolds += 1
+    }
+
+    func releaseCapture() {
+        captureHolds = max(0, captureHolds - 1)
+        if captureHolds == 0 && !isMonitoring && !state.isActive {
+            stopCapture()
+        }
+    }
 
     /// Run the capture path without streaming so the level meter is live before
     /// going on air (pre-flight mic check).
@@ -58,8 +105,10 @@ final class BroadcastController: ObservableObject {
 
     func stopMonitoring() {
         guard isMonitoring, !state.isActive else { return }
-        stopCapture()
         isMonitoring = false
+        if captureHolds == 0 {
+            stopCapture()
+        }
     }
 
     func start(streamKey: String) {
@@ -172,6 +221,7 @@ final class BroadcastController: ObservableObject {
     }
 
     private func startCapture() throws {
+        installObserversIfNeeded()
         // Already capturing (e.g. going live while monitoring) -- the tap stays.
         guard !engine.isRunning else { return }
         let input = engine.inputNode
@@ -179,6 +229,7 @@ final class BroadcastController: ObservableObject {
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, when in
             guard let self else { return }
+            self.bufferSink.send(buffer, when)
             let level = Self.rmsDb(buffer)
             Task { @MainActor in
                 // Light smoothing so the meter doesn't flicker.
@@ -190,6 +241,47 @@ final class BroadcastController: ObservableObject {
         }
         engine.prepare()
         try engine.start()
+    }
+
+    private func installObserversIfNeeded() {
+        guard !observersInstalled else { return }
+        observersInstalled = true
+
+        // Route changes (e.g. plugging/unplugging an interface) stop the
+        // engine and can change the input format; restart the tap so capture
+        // keeps flowing.
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.restartCaptureAfterDisruption() }
+        }
+
+        // Interruptions (phone call, Siri): resume capture when they end.
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            let info = notification.userInfo
+            let typeValue = info?[AVAudioSessionInterruptionTypeKey] as? UInt
+            guard typeValue == AVAudioSession.InterruptionType.ended.rawValue else { return }
+            Task { @MainActor in self?.restartCaptureAfterDisruption() }
+        }
+    }
+
+    private func restartCaptureAfterDisruption() {
+        let shouldRun = isMonitoring || captureHolds > 0 || state.isActive
+        guard shouldRun else { return }
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        do {
+            try configureAudioSession()
+            try startCapture()
+        } catch {
+            lastError = "Audio input interrupted: \(error.localizedDescription)"
+        }
     }
 
     private func stopCapture() {

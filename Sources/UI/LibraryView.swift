@@ -3,8 +3,10 @@ import SwiftUI
 /// The library track list shown inside HomeView's draggable sheet.
 struct LibraryListView: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject var uploads: UploadManager
     @State private var openSwipeTrackId: Int?
     @State private var trackPendingDelete: LibraryTrack?
+    @State private var draftPendingDelete: Draft?
 
     var body: some View {
         Group {
@@ -18,7 +20,63 @@ struct LibraryListView: View {
             }
         }
         .task {
+            uploads.loadDrafts()
             await model.loadLibrary()
+        }
+    }
+
+    /// Recordings still on this phone (offline or failed uploads).
+    private var draftsSection: some View {
+        VStack(spacing: 0) {
+            Text("On this phone")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 8)
+
+            ForEach(uploads.drafts) { draft in
+                DraftRow(
+                    draft: draft,
+                    isPlaying: model.player.playingKey == "draft-\(draft.id)",
+                    isUploading: uploads.uploadingDraftId == draft.id,
+                    uploadProgress: uploads.uploadProgress,
+                    onPlay: {
+                        guard !model.broadcast.state.isActive else { return }
+                        model.player.toggle(url: draft.url, key: "draft-\(draft.id)")
+                    },
+                    onUpload: {
+                        Task {
+                            if await uploads.upload(draft) {
+                                await model.refreshLibraryAfterBroadcast()
+                            }
+                        }
+                    },
+                    onDelete: { draftPendingDelete = draft }
+                )
+                Divider()
+                    .padding(.leading, 20)
+            }
+        }
+        .confirmationDialog(
+            "Delete recording?",
+            isPresented: Binding(
+                get: { draftPendingDelete != nil },
+                set: { if !$0 { draftPendingDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: draftPendingDelete
+        ) { draft in
+            Button("Delete \"\(draft.title)\"", role: .destructive) {
+                if model.player.playingKey == "draft-\(draft.id)" {
+                    model.player.stop()
+                }
+                uploads.deleteDraft(draft)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("This recording only exists on this phone — deleting it cannot be undone.")
         }
     }
 
@@ -34,6 +92,10 @@ struct LibraryListView: View {
             .frame(height: 0)
 
             LazyVStack(spacing: 0) {
+                if !uploads.drafts.isEmpty {
+                    draftsSection
+                }
+
                 ForEach(model.library) { track in
                     SwipeToDeleteRow(
                         isEnabled: track.owner == true,
@@ -161,6 +223,61 @@ struct TrackRow: View {
             parts.append("\(listens) listen\(listens == 1 ? "" : "s")")
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// A recording still on the phone: play locally, upload, or delete.
+struct DraftRow: View {
+    let draft: Draft
+    let isPlaying: Bool
+    let isUploading: Bool
+    let uploadProgress: Double
+    let onPlay: () -> Void
+    let onUpload: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: onPlay) {
+                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle")
+                    .font(.title2)
+                    .foregroundStyle(isPlaying ? Color.accentColor : .secondary)
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(draft.title)
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                if isUploading {
+                    ProgressView(value: uploadProgress)
+                } else {
+                    Text("Not in your library yet")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            if !isUploading {
+                Button(action: onUpload) {
+                    Image(systemName: "icloud.and.arrow.up")
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
     }
 }
 
