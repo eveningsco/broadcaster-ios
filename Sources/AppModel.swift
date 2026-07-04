@@ -12,10 +12,19 @@ final class AppModel: ObservableObject {
     @Published private(set) var isLoadingMoreLibrary = false
     @Published var libraryError: String?
 
-    /// Server page size for /v1/library (its maximum); a short page means the end.
+    @Published private(set) var exploreTracks: [LibraryTrack] = []
+    @Published private(set) var exploreStreams: [ExploreStream] = []
+    @Published private(set) var isLoadingExplore = false
+    @Published private(set) var isLoadingMoreExplore = false
+    @Published var exploreError: String?
+
+    /// Server page size for /v1/library and /v1/explore (their maximum); a
+    /// short page means the end.
     private let libraryPageSize = 100
     private var libraryPage = 0
     private var libraryHasMore = true
+    private var explorePage = 0
+    private var exploreHasMore = true
 
     let broadcast = BroadcastController()
     let player = TrackPlayer()
@@ -61,6 +70,46 @@ final class AppModel: ObservableObject {
         Keychain.clear()
         credentials = nil
         library = []
+        exploreTracks = []
+        exploreStreams = []
+    }
+
+    func loadExplore() async {
+        guard credentials != nil, !isLoadingExplore else { return }
+        isLoadingExplore = true
+        defer { isLoadingExplore = false }
+        await ensureFreshSession()
+        guard let token = credentials?.accessToken else { return }
+        do {
+            async let tracks = api.exploreTracks(accessToken: token)
+            async let streams = api.exploreStreams(accessToken: token)
+            let (loadedTracks, loadedStreams) = try await (tracks, streams)
+            exploreTracks = loadedTracks
+            exploreStreams = loadedStreams
+            explorePage = 0
+            exploreHasMore = loadedTracks.count >= libraryPageSize
+            exploreError = nil
+        } catch {
+            exploreError = error.localizedDescription
+        }
+    }
+
+    func loadMoreExploreIfNeeded(current track: LibraryTrack) async {
+        guard exploreHasMore, !isLoadingExplore, !isLoadingMoreExplore,
+              track.id == exploreTracks.last?.id else { return }
+        isLoadingMoreExplore = true
+        defer { isLoadingMoreExplore = false }
+        await ensureFreshSession()
+        guard let token = credentials?.accessToken else { return }
+        do {
+            let nextPage = try await api.exploreTracks(accessToken: token, page: explorePage + 1)
+            explorePage += 1
+            exploreHasMore = nextPage.count >= libraryPageSize
+            let known = Set(exploreTracks.map(\.id))
+            exploreTracks.append(contentsOf: nextPage.filter { !known.contains($0.id) })
+        } catch {
+            exploreError = error.localizedDescription
+        }
     }
 
     func loadLibrary() async {
@@ -103,7 +152,7 @@ final class AppModel: ObservableObject {
 
     /// Returns true on success so the UI can keep the row when deletion fails.
     func deleteTrack(_ track: LibraryTrack) async -> Bool {
-        if player.playingTrackId == track.id {
+        if player.playingKey == TrackPlayer.key(for: track) {
             player.stop()
         }
         await ensureFreshSession()

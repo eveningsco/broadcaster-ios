@@ -62,6 +62,29 @@ struct LibraryTrack: Codable, Identifiable, Equatable {
     }
 }
 
+/// A currently-live channel from GET /v1/explore/streams (media server stream
+/// state merged with the channel's live info and station).
+struct ExploreStream: Codable, Identifiable, Equatable {
+    let channelId: String
+    let type: String?
+    let subscribers: Int?
+    let name: String?
+    let title: String?
+    let host: String?
+    let image: String?
+    let station: LibraryTrack.TrackStation?
+
+    var id: String { channelId }
+
+    var displayName: String {
+        name ?? title ?? station?.name ?? "Live stream"
+    }
+
+    var streamURL: URL {
+        Config.mediaBaseURL.appendingPathComponent("/s/\(channelId)")
+    }
+}
+
 enum APIError: LocalizedError {
     case invalidCredentials
     case server(status: Int, message: String?)
@@ -111,14 +134,41 @@ struct EveningsAPI {
 
     /// The station's own tracks plus saved tracks, newest first.
     func library(accessToken: String, page: Int = 0) async throws -> [LibraryTrack] {
-        let url = baseURL
-            .appendingPathComponent("/v1/library")
-            .appending(queryItems: [URLQueryItem(name: "page", value: String(page))])
+        try await authorizedGet(
+            path: "/v1/library",
+            queryItems: [URLQueryItem(name: "page", value: String(page))],
+            accessToken: accessToken
+        )
+    }
+
+    /// Published tracks from all stations, newest first.
+    func exploreTracks(accessToken: String, page: Int = 0) async throws -> [LibraryTrack] {
+        try await authorizedGet(
+            path: "/v1/explore/tracks",
+            queryItems: [URLQueryItem(name: "page", value: String(page))],
+            accessToken: accessToken
+        )
+    }
+
+    /// Channels currently on air across the platform.
+    func exploreStreams(accessToken: String) async throws -> [ExploreStream] {
+        try await authorizedGet(path: "/v1/explore/streams", queryItems: [], accessToken: accessToken)
+    }
+
+    private func authorizedGet<T: Decodable>(
+        path: String,
+        queryItems: [URLQueryItem],
+        accessToken: String
+    ) async throws -> T {
+        var url = baseURL.appendingPathComponent(path)
+        if !queryItems.isEmpty {
+            url = url.appending(queryItems: queryItems)
+        }
         var request = URLRequest(url: url)
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: request)
         try check(response: response, data: data)
-        return try decoder.decode([LibraryTrack].self, from: data)
+        return try decoder.decode(T.self, from: data)
     }
 
     private func post<T: Decodable>(path: String, body: [String: String]) async throws -> T {

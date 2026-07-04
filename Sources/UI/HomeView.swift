@@ -18,9 +18,15 @@ private enum SheetHaptics {
 /// returns to the library. When a broadcast ends the sheet springs back up to
 /// show the new recording.
 struct HomeView: View {
+    enum SheetTab: String, CaseIterable {
+        case library = "Library"
+        case explore = "Explore"
+    }
+
     @EnvironmentObject private var model: AppModel
     @State private var libraryExpanded = true
     @State private var listAtTop = true
+    @State private var sheetTab: SheetTab = .library
     @GestureState private var dragTranslation: CGFloat = 0
 
     /// How much of the stage stays visible above the expanded sheet.
@@ -38,7 +44,7 @@ struct HomeView: View {
             ZStack(alignment: .top) {
                 BroadcastView(
                     broadcast: model.broadcast,
-                    title: isCollapsedLook ? "Go Live" : "Library"
+                    title: isCollapsedLook ? "Go Live" : sheetTab.rawValue
                 )
                     .padding(.bottom, peekHeight)
                     .background(Color(.systemGray5).ignoresSafeArea())
@@ -80,8 +86,23 @@ struct HomeView: View {
     }
 
     private func librarySheet(collapsed: Bool, bottomInset: CGFloat) -> some View {
-        LibraryListView()
-            .padding(.top, 24)
+        VStack(spacing: 0) {
+            Picker("", selection: $sheetTab) {
+                ForEach(SheetTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 8)
+
+            if sheetTab == .library {
+                LibraryListView()
+            } else {
+                ExploreListView()
+            }
+        }
             // The sheet is a full-height surface offset downward, so give the
             // list back the space that hangs below the screen edge — otherwise
             // the end of the library can never scroll into view.

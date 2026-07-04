@@ -1,20 +1,32 @@
 import AVFoundation
 import Foundation
 
-/// Minimal library playback: streams a track's S3 URL with AVPlayer.
+/// Minimal playback: streams a track's S3 URL or a channel's live stream with
+/// AVPlayer, keyed so the UI knows what's playing.
 @MainActor
 final class TrackPlayer: ObservableObject {
-    @Published private(set) var playingTrackId: Int?
+    @Published private(set) var playingKey: String?
 
     private var player: AVPlayer?
     private var endObserver: NSObjectProtocol?
 
+    static func key(for track: LibraryTrack) -> String { "track-\(track.id)" }
+    static func key(for stream: ExploreStream) -> String { "stream-\(stream.channelId)" }
+
     func toggle(_ track: LibraryTrack) {
-        if playingTrackId == track.id {
+        toggle(url: track.audioURL, key: Self.key(for: track))
+    }
+
+    func toggle(_ stream: ExploreStream) {
+        toggle(url: stream.streamURL, key: Self.key(for: stream))
+    }
+
+    private func toggle(url: URL?, key: String) {
+        if playingKey == key {
             stop()
             return
         }
-        guard let url = track.audioURL else { return }
+        guard let url else { return }
         stop()
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -29,7 +41,7 @@ final class TrackPlayer: ObservableObject {
         }
         player.play()
         self.player = player
-        playingTrackId = track.id
+        playingKey = key
     }
 
     func stop() {
@@ -39,6 +51,6 @@ final class TrackPlayer: ObservableObject {
         }
         player?.pause()
         player = nil
-        playingTrackId = nil
+        playingKey = nil
     }
 }

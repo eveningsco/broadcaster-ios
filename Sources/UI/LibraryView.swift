@@ -43,7 +43,7 @@ struct LibraryListView: View {
                         },
                         onDelete: { trackPendingDelete = track }
                     ) {
-                        TrackRow(track: track, isPlaying: model.player.playingTrackId == track.id)
+                        TrackRow(track: track, isPlaying: model.player.playingKey == TrackPlayer.key(for: track))
                             .padding(.horizontal, 20)
                             .padding(.vertical, 8)
                             .contentShape(Rectangle())
@@ -117,6 +117,7 @@ struct LibraryListView: View {
 struct TrackRow: View {
     let track: LibraryTrack
     let isPlaying: Bool
+    var showsStation = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -145,6 +146,9 @@ struct TrackRow: View {
 
     private var subtitle: String {
         var parts: [String] = []
+        if showsStation, let station = track.station?.name {
+            parts.append(station)
+        }
         if let date = track.date {
             parts.append(date.formatted(date: .abbreviated, time: .omitted))
         }
