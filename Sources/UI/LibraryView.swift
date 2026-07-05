@@ -201,7 +201,9 @@ struct TrackRow: View {
     }
 
     private var artwork: some View {
-        TrackArtwork(url: track.image.flatMap(URL.init(string:)))
+        // No track cover -> the station's image (matches how the server
+        // decorates broadcast recordings).
+        TrackArtwork(url: (track.image ?? track.station?.image).flatMap(URL.init(string:)))
             .frame(width: 48, height: 48)
             .clipShape(RoundedRectangle(cornerRadius: 8))
     }
