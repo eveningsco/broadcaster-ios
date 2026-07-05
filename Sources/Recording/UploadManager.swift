@@ -54,8 +54,19 @@ final class UploadManager: ObservableObject {
         }
 
         do {
+            // Remux moov-to-front so the server can read the duration from a
+            // stream (and web playback starts immediately). Fall back to the
+            // raw file if the remux fails for any reason.
+            let streamableURL = (try? await Faststart.makeStreamable(draft.url)) ?? draft.url
+            defer {
+                if streamableURL != draft.url {
+                    try? FileManager.default.removeItem(at: streamableURL)
+                }
+            }
+
             let uploaded = try await api.uploadTrack(
-                fileURL: draft.url,
+                fileURL: streamableURL,
+                filename: draft.url.lastPathComponent,
                 accessToken: token
             ) { [weak self] progress in
                 Task { @MainActor in self?.uploadProgress = progress }

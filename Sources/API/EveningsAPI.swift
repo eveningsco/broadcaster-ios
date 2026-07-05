@@ -182,6 +182,7 @@ struct EveningsAPI {
     /// temp file and streamed, so hour-long recordings never sit in memory.
     func uploadTrack(
         fileURL: URL,
+        filename: String? = nil,
         accessToken: String,
         onProgress: @escaping (Double) -> Void
     ) async throws -> UploadedTrack {
@@ -191,7 +192,11 @@ struct EveningsAPI {
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        let bodyURL = try assembleMultipartBody(fileURL: fileURL, boundary: boundary)
+        let bodyURL = try assembleMultipartBody(
+            fileURL: fileURL,
+            filename: filename ?? fileURL.lastPathComponent,
+            boundary: boundary
+        )
         defer { try? FileManager.default.removeItem(at: bodyURL) }
 
         let delegate = UploadProgressDelegate(onProgress: onProgress)
@@ -210,11 +215,10 @@ struct EveningsAPI {
         try check(response: response, data: data)
     }
 
-    private func assembleMultipartBody(fileURL: URL, boundary: String) throws -> URL {
+    private func assembleMultipartBody(fileURL: URL, filename: String, boundary: String) throws -> URL {
         let bodyURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("upload-\(UUID().uuidString).tmp")
 
-        let filename = fileURL.lastPathComponent
         var prefix = "--\(boundary)\r\n"
         prefix += "Content-Disposition: form-data; name=\"audio\"; filename=\"\(filename)\"\r\n"
         prefix += "Content-Type: audio/mp4\r\n\r\n"
