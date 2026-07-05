@@ -231,8 +231,9 @@ struct SegmentedLevelMeter: View {
             HStack(spacing: 3) {
                 ForEach(0..<segmentCount, id: \.self) { index in
                     let threshold = CGFloat(index + 1) / CGFloat(segmentCount)
-                    RoundedRectangle(cornerRadius: 2)
+                    Circle()
                         .fill(segmentColor(threshold: threshold, lit: fraction >= threshold))
+                        .frame(maxWidth: .infinity)
                 }
             }
             .overlay(alignment: .leading) {
