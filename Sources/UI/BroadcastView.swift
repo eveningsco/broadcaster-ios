@@ -49,7 +49,9 @@ struct BroadcastView: View {
             }
 
             RadialLevelMeter(levelDb: broadcast.levelDb)
-                .frame(width: 190, height: 190)
+                .frame(maxWidth: .infinity)
+                .aspectRatio(1, contentMode: .fit)
+                .padding(.horizontal, 24)
 
             if mode == .live {
                 liveButton
@@ -223,7 +225,7 @@ struct RadialLevelMeter: View {
     @State private var peak: CGFloat = 0
 
     private let segmentCount = 24
-    private let dotSize: CGFloat = 9
+    private let dotSize: CGFloat = 12
 
     var body: some View {
         let fraction = CGFloat(max(0, min(1, (levelDb + 60) / 60)))
