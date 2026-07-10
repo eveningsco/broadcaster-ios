@@ -53,17 +53,19 @@ struct BroadcastView: View {
                 .aspectRatio(1, contentMode: .fit)
                 .padding(.horizontal, 24)
                 .overlay {
-                    Text(mode == .record ? "Record" : "Go Live")
-                        .font(.title.weight(.semibold))
-                        .contentTransition(.opacity)
-                        .animation(.easeInOut(duration: 0.15), value: mode)
+                    Button(action: primaryAction) {
+                        Text(centerLabel)
+                            .font(.title.weight(.semibold))
+                            .foregroundStyle(centerColor)
+                            .contentTransition(.opacity)
+                            .animation(.easeInOut(duration: 0.15), value: centerLabel)
+                            // A generous tap target inside the ring.
+                            .frame(width: 160, height: 160)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(centerDisabled)
                 }
-
-            if mode == .live {
-                liveButton
-            } else {
-                recordButton
-            }
 
             if uploads.uploadingDraftId != nil {
                 VStack(spacing: 6) {
@@ -165,31 +167,40 @@ struct BroadcastView: View {
         }
     }
 
-    private var liveButton: some View {
-        Button {
-            if broadcast.state.isActive {
-                broadcast.stop()
-            } else {
-                Task {
-                    model.player.stop()
-                    await model.ensureFreshSession()
-                    guard let key = model.credentials?.streamKey else { return }
-                    broadcast.start(streamKey: key)
-                }
-            }
-        } label: {
-            Text(broadcast.state.isActive ? "End Broadcast" : "Go Live")
-                .font(.title3.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+    private var centerLabel: String {
+        if mode == .record {
+            return recorder.state.isRecording ? "Stop" : "Record"
         }
-        .buttonStyle(.borderedProminent)
-        .tint(broadcast.state.isActive ? .gray : .red)
-        .disabled(broadcast.state == .stopping)
+        switch broadcast.state {
+        case .idle: return "Go Live"
+        case .connecting: return "Connecting…"
+        case .live: return "End"
+        case .reconnecting: return "Reconnecting…"
+        case .stopping: return "Stopping…"
+        }
     }
 
-    private var recordButton: some View {
-        Button {
+    private var centerColor: Color {
+        if mode == .record {
+            return recorder.state.isRecording ? .primary : .red
+        }
+        switch broadcast.state {
+        case .idle: return .red
+        case .live: return .primary
+        case .connecting, .reconnecting: return .orange
+        case .stopping: return .secondary
+        }
+    }
+
+    private var centerDisabled: Bool {
+        if mode == .record {
+            return broadcast.state.isActive
+        }
+        return broadcast.state == .stopping
+    }
+
+    private func primaryAction() {
+        if mode == .record {
             if recorder.state.isRecording {
                 if let url = recorder.stop() {
                     model.handleFinishedRecording(url)
@@ -198,18 +209,16 @@ struct BroadcastView: View {
                 model.player.stop()
                 recorder.start()
             }
-        } label: {
-            Label(
-                recorder.state.isRecording ? "Stop Recording" : "Record",
-                systemImage: recorder.state.isRecording ? "stop.fill" : "record.circle"
-            )
-            .font(.title3.weight(.semibold))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
+        } else if broadcast.state.isActive {
+            broadcast.stop()
+        } else {
+            Task {
+                model.player.stop()
+                await model.ensureFreshSession()
+                guard let key = model.credentials?.streamKey else { return }
+                broadcast.start(streamKey: key)
+            }
         }
-        .buttonStyle(.borderedProminent)
-        .tint(recorder.state.isRecording ? .gray : .red)
-        .disabled(broadcast.state.isActive)
     }
 
     private func elapsed(since: Date) -> String {
