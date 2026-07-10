@@ -48,9 +48,8 @@ struct BroadcastView: View {
                     .font(.system(.largeTitle, design: .monospaced).weight(.medium))
             }
 
-            SegmentedLevelMeter(levelDb: broadcast.levelDb)
-                .frame(height: 14)
-                .padding(.horizontal, 8)
+            RadialLevelMeter(levelDb: broadcast.levelDb)
+                .frame(width: 190, height: 190)
 
             if mode == .live {
                 liveButton
@@ -216,32 +215,40 @@ struct BroadcastView: View {
     }
 }
 
-/// Segmented RMS meter spanning -60 dB to 0 dB with green/yellow/red zones and
-/// a decaying peak-hold notch.
-struct SegmentedLevelMeter: View {
+/// RMS meter as a ring of dots (-60 dB to 0 dB): dots light clockwise from
+/// the top as the level rises, with green/yellow/red zones and a decaying
+/// peak-hold dot.
+struct RadialLevelMeter: View {
     let levelDb: Float
     @State private var peak: CGFloat = 0
 
-    private let segmentCount = 28
+    private let segmentCount = 24
+    private let dotSize: CGFloat = 9
 
     var body: some View {
         let fraction = CGFloat(max(0, min(1, (levelDb + 60) / 60)))
+        let peakIndex = peak > 0.02 ? Int((peak * CGFloat(segmentCount)).rounded()) - 1 : -1
 
         GeometryReader { geometry in
-            HStack(spacing: 3) {
+            let radius = min(geometry.size.width, geometry.size.height) / 2 - dotSize / 2
+            let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
+
+            ZStack {
                 ForEach(0..<segmentCount, id: \.self) { index in
                     let threshold = CGFloat(index + 1) / CGFloat(segmentCount)
+                    // Start at 12 o'clock, fill clockwise.
+                    let angle = (Double(index) / Double(segmentCount)) * 2 * .pi - .pi / 2
                     Circle()
-                        .fill(segmentColor(threshold: threshold, lit: fraction >= threshold))
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .overlay(alignment: .leading) {
-                if peak > 0.02 {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(Color.primary.opacity(0.6))
-                        .frame(width: 2)
-                        .offset(x: peak * geometry.size.width - 1)
+                        .fill(dotColor(
+                            threshold: threshold,
+                            lit: fraction >= threshold,
+                            isPeak: index == peakIndex
+                        ))
+                        .frame(width: dotSize, height: dotSize)
+                        .position(
+                            x: center.x + radius * CGFloat(cos(angle)),
+                            y: center.y + radius * CGFloat(sin(angle))
+                        )
                 }
             }
         }
@@ -251,7 +258,7 @@ struct SegmentedLevelMeter: View {
             }
         }
         .task {
-            // Let the peak notch fall slowly back down.
+            // Let the peak dot fall slowly back down.
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 50_000_000)
                 peak = max(0, peak - 0.008)
@@ -259,10 +266,15 @@ struct SegmentedLevelMeter: View {
         }
     }
 
-    private func segmentColor(threshold: CGFloat, lit: Bool) -> Color {
-        guard lit else { return Color.primary.opacity(0.08) }
-        if threshold > 0.9 { return .red }
-        if threshold > 0.72 { return .yellow }
-        return .green
+    private func dotColor(threshold: CGFloat, lit: Bool, isPeak: Bool) -> Color {
+        if lit {
+            if threshold > 0.9 { return .red }
+            if threshold > 0.72 { return .yellow }
+            return .green
+        }
+        if isPeak {
+            return Color.primary.opacity(0.5)
+        }
+        return Color.primary.opacity(0.12)
     }
 }
