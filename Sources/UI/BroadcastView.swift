@@ -52,6 +52,12 @@ struct BroadcastView: View {
                 .frame(maxWidth: .infinity)
                 .aspectRatio(1, contentMode: .fit)
                 .padding(.horizontal, 24)
+                .overlay {
+                    Text(mode == .record ? "Record" : "Go Live")
+                        .font(.title.weight(.semibold))
+                        .contentTransition(.opacity)
+                        .animation(.easeInOut(duration: 0.15), value: mode)
+                }
 
             if mode == .live {
                 liveButton
