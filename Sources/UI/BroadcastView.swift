@@ -149,8 +149,7 @@ struct BroadcastView: View {
     private var broadcastBadge: some View {
         switch broadcast.state {
         case .idle:
-            Label(mode == .record ? "Ready to record" : "Offline", systemImage: "circle.fill")
-                .foregroundStyle(.secondary)
+            EmptyView()
         case .connecting:
             Label("Connecting…", systemImage: "antenna.radiowaves.left.and.right")
                 .foregroundStyle(.orange)
