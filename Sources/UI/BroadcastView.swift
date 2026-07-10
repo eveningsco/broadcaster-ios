@@ -36,18 +36,6 @@ struct BroadcastView: View {
 
             statusBadge
 
-            if case .live(let since) = broadcast.state {
-                Text(elapsed(since: since))
-                    .font(.system(.largeTitle, design: .monospaced).weight(.medium))
-                if let listeners {
-                    Label("\(listeners) listening", systemImage: "ear")
-                        .foregroundStyle(.secondary)
-                }
-            } else if case .recording(let since) = recorder.state {
-                Text(elapsed(since: since))
-                    .font(.system(.largeTitle, design: .monospaced).weight(.medium))
-            }
-
             RadialLevelMeter(levelDb: broadcast.levelDb)
                 .frame(maxWidth: .infinity)
                 .aspectRatio(1, contentMode: .fit)
@@ -66,6 +54,20 @@ struct BroadcastView: View {
                     .buttonStyle(.plain)
                     .disabled(centerDisabled)
                 }
+
+            if case .live(let since) = broadcast.state {
+                VStack(spacing: 4) {
+                    Text(elapsed(since: since))
+                        .font(.system(.largeTitle, design: .monospaced).weight(.medium))
+                    if let listeners {
+                        Label("\(listeners) listening", systemImage: "ear")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else if case .recording(let since) = recorder.state {
+                Text(elapsed(since: since))
+                    .font(.system(.largeTitle, design: .monospaced).weight(.medium))
+            }
 
             if uploads.uploadingDraftId != nil {
                 VStack(spacing: 6) {
