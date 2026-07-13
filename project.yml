@@ -26,6 +26,11 @@ targets:
         UIBackgroundModes: [audio]
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIAppFonts:
+          - et-book-roman-line-figures.ttf
+          - et-book-semi-bold-old-style-figures.ttf
+          - et-book-bold-line-figures.ttf
+          - OCRAEXT.TTF
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1"

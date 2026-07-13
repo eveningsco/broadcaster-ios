@@ -137,6 +137,50 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Saves an explore track into the library. Returns true on success so
+    /// the UI can confirm with a haptic.
+    func saveTrack(_ track: LibraryTrack) async -> Bool {
+        await ensureFreshSession()
+        guard let token = credentials?.accessToken else { return false }
+        do {
+            try await api.saveTrack(id: track.id, accessToken: token)
+        } catch APIError.server(let status, _) where status == 409 {
+            // Already saved — the desired state holds, so fall through.
+        } catch {
+            exploreError = error.localizedDescription
+            return false
+        }
+        if let index = exploreTracks.firstIndex(where: { $0.id == track.id }) {
+            exploreTracks[index].saved = true
+        }
+        await loadLibrary()
+        return true
+    }
+
+    /// Removes a saved (another station's) track from the library. Returns
+    /// true on success so the UI can confirm.
+    func removeSavedTrack(_ track: LibraryTrack) async -> Bool {
+        await ensureFreshSession()
+        guard let token = credentials?.accessToken else { return false }
+        do {
+            try await api.unsaveTrack(id: track.id, accessToken: token)
+        } catch APIError.server(let status, _) where status == 404 {
+            // Wasn't saved (or already removed) — the desired state holds.
+        } catch {
+            libraryError = error.localizedDescription
+            return false
+        }
+        // The row vanishes, so playback would outlive its UI otherwise.
+        if player.playingKey == TrackPlayer.key(for: track) {
+            player.stop()
+        }
+        library.removeAll { $0.id == track.id }
+        if let index = exploreTracks.firstIndex(where: { $0.id == track.id }) {
+            exploreTracks[index].saved = false
+        }
+        return true
+    }
+
     func loadLibrary() async {
         guard credentials != nil, !isLoadingLibrary else { return }
         isLoadingLibrary = true
@@ -172,6 +216,23 @@ final class AppModel: ObservableObject {
             library.append(contentsOf: nextPage.filter { !known.contains($0.id) })
         } catch {
             libraryError = error.localizedDescription
+        }
+    }
+
+    /// Returns true on success; on failure the error lands in libraryError.
+    func updateTrack(_ track: LibraryTrack, title: String, description: String) async -> Bool {
+        await ensureFreshSession()
+        guard let token = credentials?.accessToken else { return false }
+        do {
+            try await api.updateTrack(id: track.id, title: title, description: description, accessToken: token)
+            if let index = library.firstIndex(where: { $0.id == track.id }) {
+                library[index].title = title
+                library[index].description = description
+            }
+            return true
+        } catch {
+            libraryError = error.localizedDescription
+            return false
         }
     }
 

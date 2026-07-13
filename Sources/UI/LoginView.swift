@@ -34,7 +34,7 @@ struct LoginView: View {
             if let error = model.loginError {
                 Text(error)
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.eveningsRed)
                     .multilineTextAlignment(.center)
             }
 

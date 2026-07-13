@@ -1,12 +1,44 @@
 import SwiftUI
+import UIKit
 
-/// The library track list shown inside HomeView's draggable sheet.
+/// Soft tap when a track is selected for playback, plus a notification buzz
+/// confirming menu actions (remove, copy link).
+private enum LibraryHaptics {
+    static let select = UIImpactFeedbackGenerator(style: .light)
+    static let confirm = UINotificationFeedbackGenerator()
+}
+
+/// The library track list shown on HomeView's library page.
 struct LibraryListView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var uploads: UploadManager
-    @State private var openSwipeTrackId: Int?
+    /// True while the home swipe-away gesture is engaged, so the list can't
+    /// scroll vertically underneath the horizontal drag.
+    var scrollLocked = false
+    /// Keyword filter over titles and station names; empty shows everything.
+    var searchQuery = ""
+    /// Reports whether the list is scrolled to its top (drives pull-to-search).
+    @Binding var listAtTop: Bool
     @State private var trackPendingDelete: LibraryTrack?
+    @State private var trackToEdit: LibraryTrack?
     @State private var draftPendingDelete: Draft?
+
+    private var trimmedQuery: String {
+        searchQuery.trimmingCharacters(in: .whitespaces)
+    }
+
+    private var filteredLibrary: [LibraryTrack] {
+        guard !trimmedQuery.isEmpty else { return model.library }
+        return model.library.filter {
+            ($0.title ?? "").localizedCaseInsensitiveContains(trimmedQuery)
+                || ($0.station?.name ?? "").localizedCaseInsensitiveContains(trimmedQuery)
+        }
+    }
+
+    private var filteredDrafts: [Draft] {
+        guard !trimmedQuery.isEmpty else { return uploads.drafts }
+        return uploads.drafts.filter { $0.title.localizedCaseInsensitiveContains(trimmedQuery) }
+    }
 
     var body: some View {
         Group {
@@ -19,10 +51,24 @@ struct LibraryListView: View {
                 trackList
             }
         }
+        .scrollDisabled(scrollLocked)
         .task {
             uploads.loadDrafts()
             await model.loadLibrary()
         }
+    }
+
+    private func remove(_ track: LibraryTrack) {
+        Task {
+            let removed = await model.removeSavedTrack(track)
+            LibraryHaptics.confirm.notificationOccurred(removed ? .success : .error)
+        }
+    }
+
+    private func copyLink(for track: LibraryTrack) {
+        guard let url = track.webURL else { return }
+        UIPasteboard.general.string = url.absoluteString
+        LibraryHaptics.confirm.notificationOccurred(.success)
     }
 
     /// Recordings still on this phone (offline or failed uploads).
@@ -36,7 +82,7 @@ struct LibraryListView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 8)
 
-            ForEach(uploads.drafts) { draft in
+            ForEach(filteredDrafts) { draft in
                 DraftRow(
                     draft: draft,
                     isPlaying: model.player.playingKey == "draft-\(draft.id)",
@@ -44,7 +90,8 @@ struct LibraryListView: View {
                     uploadProgress: uploads.uploadProgress,
                     onPlay: {
                         guard !model.broadcast.state.isActive else { return }
-                        model.player.toggle(url: draft.url, key: "draft-\(draft.id)")
+                        LibraryHaptics.select.impactOccurred()
+                        model.player.toggle(url: draft.url, key: "draft-\(draft.id)", title: draft.title)
                     },
                     onUpload: {
                         Task {
@@ -82,48 +129,48 @@ struct LibraryListView: View {
 
     private var trackList: some View {
         ScrollView {
-            // Anchor for HomeView's at-top detection (drives sheet dragging).
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: LibraryScrollOffsetKey.self,
-                    value: proxy.frame(in: .named("libraryScroll")).minY
-                )
-            }
-            .frame(height: 0)
-
             LazyVStack(spacing: 0) {
-                if !uploads.drafts.isEmpty {
+                // At-top sentinel: visible only while the list is at (or
+                // rubber-banding past) its top.
+                Color.clear
+                    .frame(height: 1)
+                    .onAppear { listAtTop = true }
+                    .onDisappear { listAtTop = false }
+
+                if !filteredDrafts.isEmpty {
                     draftsSection
                 }
 
-                ForEach(model.library) { track in
-                    SwipeToDeleteRow(
-                        isEnabled: track.owner == true,
-                        isOpen: openSwipeTrackId == track.id,
-                        onOpenChanged: { open in
-                            openSwipeTrackId = open ? track.id : nil
-                        },
-                        onDelete: { trackPendingDelete = track }
-                    ) {
-                        TrackRow(track: track, isPlaying: model.player.playingKey == TrackPlayer.key(for: track))
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 8)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                if openSwipeTrackId != nil {
-                                    openSwipeTrackId = nil
-                                    return
-                                }
-                                // The mic owns the audio session while broadcasting.
-                                guard !model.broadcast.state.isActive else { return }
-                                model.player.toggle(track)
-                            }
-                            .onAppear {
-                                Task { await model.loadMoreLibraryIfNeeded(current: track) }
-                            }
-                    }
+                ForEach(filteredLibrary) { track in
+                    TrackRow(
+                        track: track,
+                        isPlaying: model.player.playingKey == TrackPlayer.key(for: track),
+                        onEdit: track.owner == true ? { trackToEdit = track } : nil,
+                        onDelete: track.owner == true ? { trackPendingDelete = track } : nil,
+                        onRemove: track.owner != true ? { remove(track) } : nil,
+                        onShare: track.owner != true && track.webURL != nil ? { copyLink(for: track) } : nil
+                    )
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            // The mic owns the audio session while broadcasting.
+                            guard !model.broadcast.state.isActive else { return }
+                            LibraryHaptics.select.impactOccurred()
+                            model.player.toggle(track)
+                        }
+                        .onAppear {
+                            Task { await model.loadMoreLibraryIfNeeded(current: track) }
+                        }
                     Divider()
                         .padding(.leading, 80)
+                }
+
+                if !trimmedQuery.isEmpty, filteredLibrary.isEmpty, filteredDrafts.isEmpty {
+                    Text("No tracks match \"\(trimmedQuery)\"")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 24)
                 }
 
                 if model.isLoadingMoreLibrary {
@@ -132,7 +179,10 @@ struct LibraryListView: View {
                 }
             }
         }
-        .coordinateSpace(name: "libraryScroll")
+        .refreshable {
+            uploads.loadDrafts()
+            await model.loadLibrary()
+        }
         .confirmationDialog(
             "Delete recording?",
             isPresented: Binding(
@@ -143,36 +193,45 @@ struct LibraryListView: View {
             presenting: trackPendingDelete
         ) { track in
             Button("Delete \"\(track.title ?? "Untitled")\"", role: .destructive) {
-                openSwipeTrackId = nil
                 Task { await model.deleteTrack(track) }
             }
-            Button("Cancel", role: .cancel) {
-                openSwipeTrackId = nil
-            }
+            Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("The recording will be removed from your library.")
         }
+        .sheet(item: $trackToEdit) { track in
+            EditTrackSheet(track: track)
+        }
     }
 
+    // Wrapped in a scroll view so pull-to-refresh can retry a failed load.
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "music.note.list")
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
-            Text("No recordings yet")
-                .font(.headline)
-            Text("Your broadcasts are recorded automatically and will show up here.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            if let error = model.libraryError {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: 12) {
+                    Image(systemName: "music.note.list")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                    Text("No recordings yet")
+                        .font(.headline)
+                    Text("Your broadcasts are recorded automatically and will show up here.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    if let error = model.libraryError {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(Color.eveningsRed)
+                    }
+                }
+                .padding(32)
+                .frame(minWidth: proxy.size.width, minHeight: proxy.size.height)
+            }
+            .refreshable {
+                uploads.loadDrafts()
+                await model.loadLibrary()
             }
         }
-        .padding(32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -180,6 +239,13 @@ struct TrackRow: View {
     let track: LibraryTrack
     let isPlaying: Bool
     var showsStation = false
+    var showsTags = false
+    var showsListens = true
+    var onEdit: (() -> Void)?
+    var onDelete: (() -> Void)?
+    var onSave: (() -> Void)?
+    var onRemove: (() -> Void)?
+    var onShare: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -187,17 +253,65 @@ struct TrackRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.title ?? "Untitled")
                     .font(.body.weight(.medium))
+                    .foregroundStyle(isPlaying ? Color.accentColor : .primary)
                     .lineLimit(1)
                 Text(subtitle)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                if showsTags, !visibleTags.isEmpty {
+                    Text(visibleTags.map { "#\($0)" }.joined(separator: " "))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
             Spacer()
-            Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle")
-                .font(.title2)
-                .foregroundStyle(isPlaying ? Color.accentColor : .secondary)
+            if onEdit != nil || onDelete != nil || onSave != nil || onRemove != nil || onShare != nil {
+                Menu {
+                    if let onSave {
+                        Button(action: onSave) {
+                            Label("Save to Library", systemImage: "square.and.arrow.down")
+                        }
+                    }
+                    if let onShare {
+                        Button(action: onShare) {
+                            Label("Share Link", systemImage: "link")
+                        }
+                    }
+                    if let onEdit {
+                        Button(action: onEdit) {
+                            Label("Edit Details", systemImage: "pencil")
+                        }
+                    }
+                    if let onRemove {
+                        Button(role: .destructive, action: onRemove) {
+                            Label("Remove from Library", systemImage: "minus.circle")
+                        }
+                    }
+                    if let onDelete {
+                        Button(role: .destructive, action: onDelete) {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Color(.systemGray))
+                        .frame(width: 32, height: 44)
+                        .contentShape(Rectangle())
+                }
+            }
         }
         .padding(.vertical, 4)
+    }
+
+    /// Tags that exist for bookkeeping (not curation) stay hidden.
+    private static let hiddenTags: Set<String> = ["uploaded-to-mixcloud"]
+
+    private var visibleTags: [String] {
+        (track.tags ?? []).filter {
+            !Self.hiddenTags.contains($0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "#")))
+        }
     }
 
     private var artwork: some View {
@@ -221,10 +335,83 @@ struct TrackRow: View {
             let m = (duration % 3600) / 60
             parts.append(h > 0 ? "\(h)h \(m)m" : "\(m)m")
         }
-        if let listens = track.listens, listens > 0 {
+        if showsListens, let listens = track.listens, listens > 0 {
             parts.append("\(listens) listen\(listens == 1 ? "" : "s")")
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Edits a track's title and description via PATCH /v1/tracks/:id.
+struct EditTrackSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let track: LibraryTrack
+    @State private var title: String
+    @State private var details: String
+    @State private var isSaving = false
+    @State private var saveError: String?
+
+    init(track: LibraryTrack) {
+        self.track = track
+        _title = State(initialValue: track.title ?? "")
+        _details = State(initialValue: track.description ?? "")
+    }
+
+    private var trimmedTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Title") {
+                    TextField("Title", text: $title)
+                }
+                Section("Description") {
+                    TextEditor(text: $details)
+                        .frame(minHeight: 120)
+                }
+                if let saveError {
+                    Section {
+                        Text(saveError)
+                            .font(.footnote)
+                            .foregroundStyle(Color.eveningsRed)
+                    }
+                }
+            }
+            .navigationTitle("Edit Track")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Button("Save") { save() }
+                            // The server rejects an empty title.
+                            .disabled(trimmedTitle.isEmpty)
+                    }
+                }
+            }
+            .interactiveDismissDisabled(isSaving)
+        }
+    }
+
+    private func save() {
+        isSaving = true
+        saveError = nil
+        Task {
+            let saved = await model.updateTrack(track, title: trimmedTitle, description: details)
+            isSaving = false
+            if saved {
+                dismiss()
+            } else {
+                saveError = model.libraryError ?? "Couldn't save changes."
+            }
+        }
     }
 }
 
@@ -280,61 +467,6 @@ struct DraftRow: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
-    }
-}
-
-/// Horizontal swipe-to-reveal delete for rows inside a plain ScrollView (where
-/// List's swipeActions aren't available). Direction-locked so vertical
-/// scrolling and the sheet drag are unaffected.
-struct SwipeToDeleteRow<Content: View>: View {
-    let isEnabled: Bool
-    let isOpen: Bool
-    let onOpenChanged: (Bool) -> Void
-    let onDelete: () -> Void
-    @ViewBuilder let content: () -> Content
-
-    @GestureState private var translation: CGFloat = 0
-
-    private let revealWidth: CGFloat = 88
-
-    var body: some View {
-        let base: CGFloat = isOpen ? -revealWidth : 0
-        let offset = min(0, max(-revealWidth - 16, base + translation))
-
-        ZStack(alignment: .trailing) {
-            if isEnabled {
-                Button {
-                    onDelete()
-                } label: {
-                    Image(systemName: "trash.fill")
-                        .foregroundStyle(.white)
-                        .frame(width: revealWidth)
-                        .frame(maxHeight: .infinity)
-                        .background(.red)
-                }
-            }
-
-            content()
-                .background(Color(.systemBackground))
-                .offset(x: isEnabled ? offset : 0)
-                .simultaneousGesture(swipe, including: isEnabled ? .all : .subviews)
-                .animation(.spring(response: 0.3, dampingFraction: 0.85), value: isOpen)
-        }
-        .clipped()
-    }
-
-    private var swipe: some Gesture {
-        DragGesture(minimumDistance: 24)
-            .updating($translation) { value, state, _ in
-                // Horizontal intent only; let vertical drags scroll the list.
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                state = value.translation.width
-            }
-            .onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                let projected = (isOpen ? -revealWidth : 0) + value.predictedEndTranslation.width
-                onOpenChanged(projected < -revealWidth / 2)
-            }
     }
 }
 

@@ -51,6 +51,11 @@ final class BroadcastController: ObservableObject {
     @Published private(set) var state: BroadcastState = .idle
     @Published private(set) var levelDb: Float = -160
     @Published private(set) var lastError: String?
+    /// Input ports the session can capture from (built-in mic, headset, USB
+    /// interface, ...). Only meaningful once the session is configured.
+    @Published private(set) var availableInputs: [AVAudioSessionPortDescription] = []
+    /// UID of the port currently feeding the input route.
+    @Published private(set) var currentInputUID: String?
 
     private let engine = AVAudioEngine()
     private var connection: RTMPConnection?
@@ -109,6 +114,23 @@ final class BroadcastController: ObservableObject {
         if captureHolds == 0 {
             stopCapture()
         }
+    }
+
+    /// Routes capture to the given port. The engine restarts itself via the
+    /// configuration-change observer if the format changes.
+    func selectInput(_ input: AVAudioSessionPortDescription) {
+        do {
+            try AVAudioSession.sharedInstance().setPreferredInput(input)
+        } catch {
+            lastError = "Couldn't switch input: \(error.localizedDescription)"
+        }
+        refreshInputs()
+    }
+
+    private func refreshInputs() {
+        let session = AVAudioSession.sharedInstance()
+        availableInputs = session.availableInputs ?? []
+        currentInputUID = session.currentRoute.inputs.first?.uid
     }
 
     func start(streamKey: String) {
@@ -218,6 +240,7 @@ final class BroadcastController: ObservableObject {
         try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth])
         try session.setPreferredSampleRate(48_000)
         try session.setActive(true)
+        refreshInputs()
     }
 
     private func startCapture() throws {
@@ -256,6 +279,15 @@ final class BroadcastController: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.restartCaptureAfterDisruption() }
+        }
+
+        // Keep the input list current as devices are plugged and unplugged.
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshInputs() }
         }
 
         // Interruptions (phone call, Siri): resume capture when they end.

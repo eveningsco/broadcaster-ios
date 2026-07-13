@@ -1,175 +1,541 @@
 import SwiftUI
 import UIKit
 
-/// Shared feedback generators so they stay warm across gesture updates.
-private enum SheetHaptics {
-    static let tick = UIImpactFeedbackGenerator(style: .light)
+/// Shared feedback generator, kept warm from the drag so the snap haptic
+/// fires with no latency at the commit point.
+private enum HomeHaptics {
     static let snap = UIImpactFeedbackGenerator(style: .medium)
-
-    static func prepare() {
-        tick.prepare()
-        snap.prepare()
-    }
+    /// Soft tap for the bottom bar's play/pause control, matching row selection.
+    static let tap = UIImpactFeedbackGenerator(style: .light)
 }
 
-/// Home layout: the livestream stage (BroadcastView) sits at the back, with the
-/// library floating over it as a custom draggable sheet. Pulling the sheet down
-/// reveals the stage — that's how you enter livestream mode; pulling it back up
-/// returns to the library. When a broadcast ends the sheet springs back up to
-/// show the new recording.
+/// Home layout: the livestream stage (BroadcastView) sits at the back, with
+/// the library floating over it as a rounded card. Swiping the library away to
+/// the right reveals the stage — that's how you enter livestream mode; swiping
+/// back left (or ending a broadcast) returns to the library.
 struct HomeView: View {
-    enum SheetTab: String, CaseIterable {
-        case library = "Library"
-        case explore = "Explore"
-    }
-
     @EnvironmentObject private var model: AppModel
-    @State private var libraryExpanded = true
+    @State private var libraryShown = true
+    @State private var dragTranslation: CGFloat = 0
+    /// True while a finger is scrubbing the mini player's waveform, so the
+    /// swipe-away gesture stays out of the way.
+    @State private var isScrubbing = false
+    /// Deferred audio-session work scheduled after a transition settles.
+    @State private var audioTransitionTask: Task<Void, Never>?
+    /// Pull-down-to-search over the library.
+    @State private var searchActive = false
+    @State private var searchQuery = ""
+    @FocusState private var searchFocused: Bool
+    /// Whether the library list is scrolled to its top; a downward pull on
+    /// the list only means "search" when it starts from the top.
     @State private var listAtTop = true
-    @State private var sheetTab: SheetTab = .library
-    @GestureState private var dragTranslation: CGFloat = 0
 
-    /// How much of the stage stays visible above the expanded sheet.
-    private let expandedTopInset: CGFloat = 72
-    /// Height of the collapsed sheet's peek bar.
-    private let peekHeight: CGFloat = 76
+    enum CardTab {
+        case library
+        case explore
+    }
+    @State private var cardTab: CardTab = .library
 
     var body: some View {
         GeometryReader { geometry in
-            let collapsedOffset = geometry.size.height - peekHeight
-            let baseOffset = libraryExpanded ? expandedTopInset : collapsedOffset
-            let offset = min(max(baseOffset + dragTranslation, expandedTopInset), collapsedOffset)
-            let isCollapsedLook = offset > (expandedTopInset + collapsedOffset) / 2
+            let width = geometry.size.width
+            let baseOffset: CGFloat = libraryShown ? 0 : width
+            let offset = min(max(baseOffset + dragTranslation, 0), width)
+            // 0 = library covering the stage, 1 = stage fully revealed.
+            let progress = width > 0 ? offset / width : 0
 
-            ZStack(alignment: .top) {
+            ZStack {
+                Color.black
+
                 BroadcastView(
                     broadcast: model.broadcast,
                     recorder: model.recorder,
                     uploads: model.uploads,
-                    title: isCollapsedLook ? "Go Live" : sheetTab.rawValue
+                    stageVisible: !libraryShown,
+                    revealProgress: progress
                 )
-                    .padding(.bottom, peekHeight)
-                    .background(Color(.systemGray5).ignoresSafeArea())
+                .padding(.top, geometry.safeAreaInsets.top)
+                .padding(.bottom, geometry.safeAreaInsets.bottom)
+                .background(Color(red: 0x15 / 255, green: 0x15 / 255, blue: 0x12 / 255))
+                // The stage brightens as the card slides away — depth without
+                // any scaling, so the screen edges never move.
+                .opacity(0.7 + 0.3 * progress)
 
-                librarySheet(
-                    collapsed: isCollapsedLook,
-                    bottomInset: expandedTopInset + geometry.safeAreaInsets.bottom
-                )
-                    .offset(y: offset)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: offset)
+                libraryLayer(safeArea: geometry.safeAreaInsets)
+                    .offset(x: offset)
             }
-            .ignoresSafeArea(edges: .bottom)
-            .onPreferenceChange(LibraryScrollOffsetKey.self) { minY in
-                listAtTop = minY >= -1
+            .ignoresSafeArea()
+            .simultaneousGesture(swipeAway(width: width))
+        }
+        // The keyboard overlays the content: without this the geometry
+        // shrinks when it appears and the whole page shifts up.
+        .ignoresSafeArea(.keyboard)
+        .onChange(of: libraryShown) { shown in
+            HomeHaptics.snap.impactOccurred(intensity: 0.9)
+            // Pause (don't stop) so the mini player is still there, loaded,
+            // when the library comes back; going live/recording still stops
+            // it for real.
+            if !shown {
+                model.player.pause()
             }
-            // Light tick as the drag crosses the commit point (either direction)...
-            .onChange(of: isCollapsedLook) { _ in
-                SheetHaptics.tick.impactOccurred()
-            }
-            // ...and a firmer thump when the sheet snaps into place.
-            .onChange(of: libraryExpanded) { expanded in
-                SheetHaptics.snap.impactOccurred(intensity: 0.9)
-                // Live level meter while the stage is showing (mic check
-                // before going live); release the mic when browsing.
-                if expanded {
+            // Live level meter while the stage is showing (mic check before
+            // going live); release the mic when browsing. Starting/stopping
+            // capture blocks the main thread long enough to drop frames, so
+            // wait for the slide animation to settle first.
+            audioTransitionTask?.cancel()
+            audioTransitionTask = Task {
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                guard !Task.isCancelled else { return }
+                if shown {
                     model.broadcast.stopMonitoring()
                 } else {
-                    model.player.stop()
                     model.broadcast.startMonitoring()
                 }
             }
-            .onChange(of: model.broadcast.state.isActive) { active in
-                if !active {
-                    libraryExpanded = true
-                    Task { await model.refreshLibraryAfterBroadcast() }
-                }
+        }
+        .onChange(of: model.broadcast.state.isActive) { active in
+            if !active {
+                libraryShown = true
+                Task { await model.refreshLibraryAfterBroadcast() }
             }
-            // A recording upload just landed in the library — show it.
-            .onReceive(model.uploads.$lastUploadCompletedAt) { completedAt in
-                if completedAt != nil {
-                    libraryExpanded = true
-                    sheetTab = .library
-                }
+        }
+        // A recording upload just landed in the library — show it.
+        .onReceive(model.uploads.$lastUploadCompletedAt) { completedAt in
+            if completedAt != nil {
+                libraryShown = true
             }
         }
     }
 
-    private func librarySheet(collapsed: Bool, bottomInset: CGFloat) -> some View {
-        VStack(spacing: 0) {
-            Picker("", selection: $sheetTab) {
-                ForEach(SheetTab.allCases, id: \.self) { tab in
-                    Text(tab.rawValue).tag(tab)
+    /// The library card plus the go-live pill, with the stage's backdrop
+    /// showing through the margins so the card reads as a layer on top.
+    private func libraryLayer(safeArea: EdgeInsets) -> some View {
+        VStack(spacing: 20) {
+            libraryCard(safeArea: safeArea)
+
+            HomeBottomBar(player: model.player, isScrubbing: $isScrubbing) {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                    libraryShown = false
                 }
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 20)
-            .padding(.top, 20)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 16)
+        }
+        .padding(.bottom, safeArea.bottom + 8)
+    }
 
-            if sheetTab == .library {
-                LibraryListView(uploads: model.uploads)
+    /// Rows scroll edge to edge inside the card, fading out under the header
+    /// and again just above the card's rounded bottom.
+    private func libraryCard(safeArea: EdgeInsets) -> some View {
+        Group {
+            if cardTab == .library {
+                LibraryListView(
+                    uploads: model.uploads,
+                    scrollLocked: dragTranslation != 0,
+                    searchQuery: searchActive ? searchQuery : "",
+                    listAtTop: $listAtTop
+                )
             } else {
-                ExploreListView()
+                ExploreListView(scrollLocked: dragTranslation != 0)
             }
         }
-            // The sheet is a full-height surface offset downward, so give the
-            // list back the space that hangs below the screen edge — otherwise
-            // the end of the library can never scroll into view.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                VStack(spacing: 0) {
+                    HStack(spacing: 16) {
+                        cardTabTitle("Library", tab: .library)
+                        cardTabTitle("Explore", tab: .explore)
+                        Spacer()
+                        LoopButton(player: model.player)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, safeArea.top + 24)
+
+                    if searchActive {
+                        searchField
+                            .padding(.horizontal, 24)
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .padding(.bottom, 12)
+                .background {
+                    // Bleeds below the header so rows fade out before they
+                    // reach the title (black on the dark card). Holds solid
+                    // through most of its height before fading.
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color(.systemBackground), location: 0),
+                            .init(color: Color(.systemBackground), location: 0.6),
+                            .init(color: Color(.systemBackground).opacity(0), location: 1),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .padding(.bottom, -48)
+                }
+                .contentShape(Rectangle())
+                // Pulling down on the header reveals the search field. The
+                // header sits outside the scroll view, so this doesn't fight
+                // list scrolling; the vertical-dominance check keeps it out
+                // of the horizontal swipe-away's lane.
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 12)
+                        .onChanged { value in
+                            guard !searchActive, cardTab == .library,
+                                  value.translation.height > 40,
+                                  value.translation.height > abs(value.translation.width) else { return }
+                            revealSearch()
+                        }
+                )
+            }
+            // Let the last row scroll up out of the bottom fade.
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                Color.clear.frame(height: bottomInset)
+                Color.clear.frame(height: 32)
             }
-            .opacity(collapsed ? 0 : 1)
-            .overlay(alignment: .top) {
-                Image(systemName: "chevron.up")
+            .overlay(alignment: .bottom) {
+                LinearGradient(
+                    colors: [Color(.systemBackground).opacity(0), Color(.systemBackground)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 56)
+                .allowsHitTesting(false)
+            }
+            .background(Color(.systemBackground))
+            // Full-bleed at the top; only the bottom corners are rounded so
+            // the card looks anchored to the top of the screen.
+            .clipShape(UnevenRoundedRectangle(
+                cornerRadii: .init(bottomLeading: 40, bottomTrailing: 40),
+                style: .continuous
+            ))
+            .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
+            // Pulling down anywhere on the card while the list is at its top
+            // reveals the search (the header gesture handles pulls when the
+            // list is scrolled deep).
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { value in
+                        guard !searchActive, listAtTop, cardTab == .library,
+                              value.translation.height > 48,
+                              value.translation.height > abs(value.translation.width) else { return }
+                        revealSearch()
+                    }
+            )
+    }
+
+    /// Header tab title; the active one reads in ink, the other recedes.
+    private func cardTabTitle(_ label: String, tab: CardTab) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                cardTab = tab
+            }
+        } label: {
+            Text(label)
+                .font(.custom("ETBembo-SemiBoldOSF", size: 34))
+                .foregroundStyle(cardTab == tab ? Color.primary : Color(.systemGray2))
+        }
+        .buttonStyle(.plain)
+    }
+
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Search your library", text: $searchQuery)
+                .focused($searchFocused)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+            Button {
+                dismissSearch()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
                     .foregroundStyle(.secondary)
-                    .padding(.top, 30)
-                    .opacity(collapsed ? 1 : 0)
             }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(
-            UnevenRoundedRectangle(cornerRadii: .init(topLeading: 28, topTrailing: 28))
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.12), radius: 16, y: -6)
-                .ignoresSafeArea(edges: .bottom)
-        )
-        .simultaneousGesture(sheetDrag)
-        .onTapGesture {
-            if !libraryExpanded {
-                libraryExpanded = true
-            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.08)))
+    }
+
+    private func revealSearch() {
+        guard !searchActive else { return }
+        HomeHaptics.snap.impactOccurred(intensity: 0.6)
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            searchActive = true
+        }
+        // Focus after the field exists in the hierarchy.
+        DispatchQueue.main.async {
+            searchFocused = true
         }
     }
 
-    /// Whole-sheet drag. When the sheet is expanded it engages only while the
-    /// list is scrolled to the top and the pull is downward, so normal list
-    /// scrolling is untouched; when collapsed any drag moves the sheet.
-    private var sheetDrag: some Gesture {
-        DragGesture(minimumDistance: 8)
-            .updating($dragTranslation) { value, state, _ in
-                let pullingDown = value.translation.height > 0
-                if !libraryExpanded || (listAtTop && pullingDown) {
-                    if state == 0 {
-                        SheetHaptics.prepare()
-                    }
-                    state = value.translation.height
+    private func dismissSearch() {
+        searchQuery = ""
+        searchFocused = false
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            searchActive = false
+        }
+    }
+
+    /// Whole-screen horizontal drag, direction-locked so vertical list
+    /// scrolling is untouched — but once a horizontal drag engages it stays
+    /// engaged, tracking the finger 1:1; the spring only runs on release.
+    /// Rightward drags slide the library off to reveal the stage; leftward
+    /// drags bring it back. Leftward drags while the library is up are left
+    /// alone, so swipe-to-delete on rows works.
+    private func swipeAway(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                if isScrubbing {
+                    dragTranslation = 0
+                    return
                 }
+                let horizontal = abs(value.translation.width) > abs(value.translation.height)
+                guard horizontal || dragTranslation != 0 else { return }
+                if dragTranslation == 0 {
+                    HomeHaptics.snap.prepare()
+                }
+                dragTranslation = value.translation.width
             }
             .onEnded { value in
-                let projected = value.predictedEndTranslation.height
-                if libraryExpanded, listAtTop, projected > 60 {
-                    libraryExpanded = false
-                } else if !libraryExpanded, projected < -60 {
-                    libraryExpanded = true
+                // Only commit if this gesture actually moved the layer (a
+                // waveform scrub keeps dragTranslation pinned at 0).
+                let engaged = dragTranslation != 0
+                let projected = value.predictedEndTranslation.width
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                    if engaged {
+                        if libraryShown, projected > width / 3 {
+                            libraryShown = false
+                        } else if !libraryShown, projected < -width / 3 {
+                            libraryShown = true
+                        }
+                    }
+                    dragTranslation = 0
                 }
             }
     }
 }
 
-/// Reports the library scroll content's top edge so HomeView knows when the
-/// list is at the top (and a downward pull should move the sheet instead).
-struct LibraryScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+/// Toggles looping for the currently selected track; lit in the brand red
+/// while that track loops, dimmed when nothing is loaded.
+struct LoopButton: View {
+    @ObservedObject var player: TrackPlayer
+
+    var body: some View {
+        Button {
+            player.toggleLooping()
+        } label: {
+            Image(systemName: "repeat")
+                .font(.body.weight(.medium))
+                .foregroundStyle(player.isLoopingCurrent ? Color.eveningsRed : Color(.systemGray))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(player.playingKey == nil ? 0.4 : 1)
+    }
+}
+
+/// The go-live circle with, while a track is playing, a mini player to its
+/// right (artwork, title, pause). Observes the player directly so it appears
+/// and disappears with playback.
+struct HomeBottomBar: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject var player: TrackPlayer
+    @Binding var isScrubbing: Bool
+    let goLive: () -> Void
+
+    @StateObject private var waveform = WaveformLoader()
+
+    /// One height for the circle and the player so they always line up.
+    private let barHeight: CGFloat = 64
+
+    private struct NowPlaying {
+        let title: String
+        let station: String?
+        let imageURL: URL?
+        let audioURL: URL?
+    }
+
+    private var nowPlaying: NowPlaying? {
+        guard let key = player.playingKey else { return nil }
+        if let track = model.library.first(where: { TrackPlayer.key(for: $0) == key })
+            ?? model.exploreTracks.first(where: { TrackPlayer.key(for: $0) == key }) {
+            return NowPlaying(
+                title: track.title ?? "Untitled",
+                station: track.station?.name,
+                imageURL: (track.image ?? track.station?.image).flatMap(URL.init(string:)),
+                audioURL: track.audioURL
+            )
+        }
+        if let stream = model.exploreStreams.first(where: { TrackPlayer.key(for: $0) == key }) {
+            // Live stream: endless, so no audio file to draw a waveform from.
+            let station = stream.station?.name
+            return NowPlaying(
+                title: stream.displayName,
+                station: station == stream.displayName ? nil : station,
+                imageURL: (stream.image ?? stream.station?.image).flatMap(URL.init(string:)),
+                audioURL: nil
+            )
+        }
+        if let draft = model.uploads.drafts.first(where: { "draft-\($0.id)" == key }) {
+            return NowPlaying(title: draft.title, station: nil, imageURL: nil, audioURL: draft.url)
+        }
+        return nil
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: goLive) {
+                Circle()
+                    .fill(Color.eveningsRed)
+                    .frame(width: barHeight, height: barHeight)
+            }
+            .buttonStyle(.plain)
+
+            if let nowPlaying {
+                HStack(spacing: 12) {
+                    TrackArtwork(url: nowPlaying.imageURL)
+                        .frame(width: 40, height: 40)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    if player.isPaused {
+                        // Paused: the scrubber gives way to what's queued up.
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(nowPlaying.title)
+                                .font(.footnote.weight(.medium))
+                                .lineLimit(1)
+                            if let station = nowPlaying.station {
+                                Text(station)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .transition(.opacity)
+                    } else {
+                        PlayingWaveform(
+                            levels: waveform.levels,
+                            progress: player.progress,
+                            onScrub: { player.seek(toFraction: $0) },
+                            isScrubbing: $isScrubbing
+                        )
+                        .transition(.opacity)
+                    }
+                    Button {
+                        HomeHaptics.tap.impactOccurred()
+                        if player.isPaused {
+                            player.resume()
+                        } else {
+                            player.pause()
+                        }
+                    } label: {
+                        Image(systemName: player.isPaused ? "play.fill" : "pause.fill")
+                            .font(.title3)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity)
+                .frame(height: barHeight)
+                .background(Color(.systemBackground))
+                // Concentric with the cover art: its 8pt radius plus the
+                // 12pt inset around it.
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .animation(.easeInOut(duration: 0.2), value: player.isPaused)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .task(id: player.playingKey) {
+                    if let key = player.playingKey {
+                        waveform.load(key: key, url: nowPlaying.audioURL)
+                    }
+                }
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: player.playingKey)
+    }
+}
+
+/// The playing track's waveform doubling as a scrubber: capsule bars sized
+/// from the audio's per-bucket levels (flat while they're still computing),
+/// bars behind the playhead render brighter, and dragging (or tapping) across
+/// the bars seeks on release.
+struct PlayingWaveform: View {
+    /// Normalized 0...1 amplitude per bar; nil while still computing.
+    let levels: [Float]?
+    let progress: Double
+    let onScrub: (Double) -> Void
+    @Binding var isScrubbing: Bool
+
+    /// Position under the finger while scrubbing, previewed before the seek.
+    @State private var scrubFraction: Double?
+    /// Bar index last crossed by the finger; a tick fires on each new bar so
+    /// scrubbing feels like a zipper.
+    @State private var lastTickedBar: Int?
+
+    private static let tick = UISelectionFeedbackGenerator()
+
+    private var barCount: Int { levels?.count ?? 24 }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let displayed = scrubFraction ?? progress
+
+            ZStack(alignment: .leading) {
+                bars.opacity(0.25)
+                // Continuous playhead: a bright copy masked to the exact
+                // progress width, so even the first seconds of a long track
+                // are visible (per-bar coloring hid anything under ~2%).
+                bars
+                    .opacity(0.9)
+                    .mask(alignment: .leading) {
+                        Rectangle()
+                            .frame(width: max(3, displayed * width))
+                    }
+            }
+            .frame(width: width, height: geometry.size.height)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        if !isScrubbing {
+                            Self.tick.prepare()
+                        }
+                        isScrubbing = true
+                        let fraction = min(max(value.location.x / width, 0), 1)
+                        scrubFraction = fraction
+                        let bar = min(barCount - 1, Int(fraction * Double(barCount)))
+                        if bar != lastTickedBar {
+                            if lastTickedBar != nil {
+                                Self.tick.selectionChanged()
+                                Self.tick.prepare()
+                            }
+                            lastTickedBar = bar
+                        }
+                    }
+                    .onEnded { value in
+                        onScrub(min(max(value.location.x / width, 0), 1))
+                        scrubFraction = nil
+                        lastTickedBar = nil
+                        isScrubbing = false
+                    }
+            )
+        }
+    }
+
+    private var bars: some View {
+        HStack(spacing: 0) {
+            ForEach(0..<barCount, id: \.self) { index in
+                let height = levels.map { 6 + 22 * CGFloat($0[index]) } ?? 5
+                Capsule()
+                    .fill(.primary)
+                    .frame(width: 3, height: height)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: levels)
     }
 }

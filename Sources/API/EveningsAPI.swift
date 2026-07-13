@@ -39,7 +39,8 @@ struct LibraryTrack: Codable, Identifiable, Equatable {
     }
 
     let id: Int
-    let title: String?
+    var title: String?
+    var description: String?
     let location: String?
     let image: String?
     let duration: Int?
@@ -48,11 +49,17 @@ struct LibraryTrack: Codable, Identifiable, Equatable {
     let createdAt: String?
     let listens: Int?
     let owner: Bool?
-    let saved: Bool?
+    var saved: Bool?
     let station: TrackStation?
 
     var audioURL: URL? {
         location.flatMap(URL.init(string:))
+    }
+
+    /// The track's public page on the website; needs the station slug.
+    var webURL: URL? {
+        guard let slug = station?.slug else { return nil }
+        return Config.webBaseURL.appendingPathComponent("\(slug)/tracks/\(id)")
     }
 
     var date: Date? {
@@ -142,6 +149,18 @@ struct EveningsAPI {
         return try decoder.decode(StreamStatus.self, from: data)
     }
 
+    /// Updates a track's editable metadata. The server rejects an empty
+    /// title, so callers should validate before sending.
+    func updateTrack(id: Int, title: String, description: String, accessToken: String) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("/v1/tracks/\(id)"))
+        request.httpMethod = "PATCH"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["title": title, "description": description])
+        let (data, response) = try await session.data(for: request)
+        try check(response: response, data: data)
+    }
+
     /// Soft-deletes a track the station owns (restorable server-side).
     func deleteTrack(id: Int, accessToken: String) async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent("/v1/tracks/\(id)"))
@@ -167,6 +186,26 @@ struct EveningsAPI {
             queryItems: [URLQueryItem(name: "page", value: String(page))],
             accessToken: accessToken
         )
+    }
+
+    /// Saves a published track from another station into the library.
+    /// The server answers 409 if it's already saved.
+    func saveTrack(id: Int, accessToken: String) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("/v1/explore/tracks/\(id)/save"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        try check(response: response, data: data)
+    }
+
+    /// Removes a previously saved track from the library (the inverse of
+    /// saveTrack). The server answers 404 if it wasn't saved.
+    func unsaveTrack(id: Int, accessToken: String) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("/v1/explore/tracks/\(id)/save"))
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await session.data(for: request)
+        try check(response: response, data: data)
     }
 
     /// Channels currently on air across the platform.
