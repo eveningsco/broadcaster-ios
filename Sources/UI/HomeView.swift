@@ -35,6 +35,15 @@ struct HomeView: View {
         case explore
     }
     @State private var cardTab: CardTab = .library
+    /// What a horizontal drag is moving: the whole card off the stage, or
+    /// the tab strip inside the card (library ↔ explore). Locked when the
+    /// drag engages so a mid-gesture direction reversal doesn't switch jobs.
+    private enum DragRole {
+        case stage
+        case tab
+    }
+    @State private var dragRole: DragRole = .stage
+    @State private var tabDragTranslation: CGFloat = 0
 
     var body: some View {
         GeometryReader { geometry in
@@ -52,7 +61,16 @@ struct HomeView: View {
                     recorder: model.recorder,
                     uploads: model.uploads,
                     stageVisible: !libraryShown,
-                    revealProgress: progress
+                    revealProgress: progress,
+                    onBack: {
+                        HomeHaptics.tap.impactOccurred()
+                        // Warm the generator so the snap that fires when
+                        // libraryShown flips lands with no latency.
+                        HomeHaptics.snap.prepare()
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                            libraryShown = true
+                        }
+                    }
                 )
                 .padding(.top, geometry.safeAreaInsets.top)
                 .padding(.bottom, geometry.safeAreaInsets.bottom)
@@ -61,7 +79,7 @@ struct HomeView: View {
                 // any scaling, so the screen edges never move.
                 .opacity(0.7 + 0.3 * progress)
 
-                libraryLayer(safeArea: geometry.safeAreaInsets)
+                libraryLayer(safeArea: geometry.safeAreaInsets, width: width)
                     .offset(x: offset)
             }
             .ignoresSafeArea()
@@ -93,6 +111,9 @@ struct HomeView: View {
                 }
             }
         }
+        .onChange(of: cardTab) { _ in
+            HomeHaptics.tap.impactOccurred()
+        }
         .onChange(of: model.broadcast.state.isActive) { active in
             if !active {
                 libraryShown = true
@@ -109,9 +130,9 @@ struct HomeView: View {
 
     /// The library card plus the go-live pill, with the stage's backdrop
     /// showing through the margins so the card reads as a layer on top.
-    private func libraryLayer(safeArea: EdgeInsets) -> some View {
+    private func libraryLayer(safeArea: EdgeInsets, width: CGFloat) -> some View {
         VStack(spacing: 20) {
-            libraryCard(safeArea: safeArea)
+            libraryCard(safeArea: safeArea, width: width)
 
             HomeBottomBar(player: model.player, isScrubbing: $isScrubbing) {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
@@ -125,19 +146,26 @@ struct HomeView: View {
 
     /// Rows scroll edge to edge inside the card, fading out under the header
     /// and again just above the card's rounded bottom.
-    private func libraryCard(safeArea: EdgeInsets) -> some View {
-        Group {
-            if cardTab == .library {
-                LibraryListView(
-                    uploads: model.uploads,
-                    scrollLocked: dragTranslation != 0,
-                    searchQuery: searchActive ? searchQuery : "",
-                    listAtTop: $listAtTop
-                )
-            } else {
-                ExploreListView(scrollLocked: dragTranslation != 0)
-            }
+    private func libraryCard(safeArea: EdgeInsets, width: CGFloat) -> some View {
+        // Both lists live side by side in a strip twice the card's width;
+        // the active tab picks the resting offset and a tab drag tracks the
+        // finger between them, hard-stopped at either end.
+        let tabBase: CGFloat = cardTab == .library ? 0 : -width
+        let tabOffset = min(max(tabBase + tabDragTranslation, -width), 0)
+        let listsLocked = dragTranslation != 0 || tabDragTranslation != 0
+        return HStack(spacing: 0) {
+            LibraryListView(
+                uploads: model.uploads,
+                scrollLocked: listsLocked,
+                searchQuery: searchActive ? searchQuery : "",
+                listAtTop: $listAtTop
+            )
+            .frame(width: width)
+            ExploreListView(scrollLocked: listsLocked)
+                .frame(width: width)
         }
+        .offset(x: tabOffset)
+        .frame(width: width, alignment: .leading)
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
                     HStack(spacing: 16) {
@@ -225,7 +253,7 @@ struct HomeView: View {
     /// Header tab title; the active one reads in ink, the other recedes.
     private func cardTabTitle(_ label: String, tab: CardTab) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
                 cardTab = tab
             }
         } label: {
@@ -281,37 +309,58 @@ struct HomeView: View {
     /// Whole-screen horizontal drag, direction-locked so vertical list
     /// scrolling is untouched — but once a horizontal drag engages it stays
     /// engaged, tracking the finger 1:1; the spring only runs on release.
-    /// Rightward drags slide the library off to reveal the stage; leftward
-    /// drags bring it back. Leftward drags while the library is up are left
-    /// alone, so swipe-to-delete on rows works.
+    /// A rightward drag on the library slides the card off to reveal the
+    /// stage (and a leftward drag on the stage brings it back); any other
+    /// horizontal drag slides between the card's Library and Explore tabs.
     private func swipeAway(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 12)
             .onChanged { value in
                 if isScrubbing {
                     dragTranslation = 0
+                    tabDragTranslation = 0
                     return
                 }
                 let horizontal = abs(value.translation.width) > abs(value.translation.height)
-                guard horizontal || dragTranslation != 0 else { return }
-                if dragTranslation == 0 {
+                let engaged = dragTranslation != 0 || tabDragTranslation != 0
+                guard horizontal || engaged else { return }
+                if !engaged {
                     HomeHaptics.snap.prepare()
+                    if !libraryShown || (cardTab == .library && value.translation.width > 0) {
+                        dragRole = .stage
+                    } else {
+                        dragRole = .tab
+                    }
                 }
-                dragTranslation = value.translation.width
+                switch dragRole {
+                case .stage:
+                    dragTranslation = value.translation.width
+                case .tab:
+                    tabDragTranslation = value.translation.width
+                }
             }
             .onEnded { value in
-                // Only commit if this gesture actually moved the layer (a
-                // waveform scrub keeps dragTranslation pinned at 0).
-                let engaged = dragTranslation != 0
+                // Only commit if this gesture actually moved something (a
+                // waveform scrub keeps both translations pinned at 0).
                 let projected = value.predictedEndTranslation.width
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                    if engaged {
+                    switch dragRole {
+                    case .stage where dragTranslation != 0:
                         if libraryShown, projected > width / 3 {
                             libraryShown = false
                         } else if !libraryShown, projected < -width / 3 {
                             libraryShown = true
                         }
+                    case .tab where tabDragTranslation != 0:
+                        if cardTab == .library, projected < -width / 3 {
+                            cardTab = .explore
+                        } else if cardTab == .explore, projected > width / 3 {
+                            cardTab = .library
+                        }
+                    default:
+                        break
                     }
                     dragTranslation = 0
+                    tabDragTranslation = 0
                 }
             }
     }

@@ -239,6 +239,9 @@ final class BroadcastController: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth])
         try session.setPreferredSampleRate(48_000)
+        // iOS silences all haptics while audio capture is active unless the
+        // session opts in — without this, buttons on the stage feel dead.
+        try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
         try session.setActive(true)
         refreshInputs()
     }

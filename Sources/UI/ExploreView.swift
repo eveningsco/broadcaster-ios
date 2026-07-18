@@ -152,6 +152,8 @@ struct ExploreListView: View {
 struct StreamRow: View {
     let stream: ExploreStream
     let isPlaying: Bool
+    /// Drives the LIVE icon's breathing opacity.
+    @State private var livePulse = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -165,9 +167,21 @@ struct StreamRow: View {
                     .foregroundStyle(isPlaying ? Color.accentColor : .primary)
                     .lineLimit(1)
                 HStack(spacing: 6) {
-                    Label("LIVE", systemImage: "dot.radiowaves.left.and.right")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(Color.eveningsRed)
+                    HStack(spacing: 4) {
+                        Image(systemName: "dot.radiowaves.left.and.right")
+                            .opacity(livePulse ? 0.3 : 1)
+                        Text("LIVE")
+                    }
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Color.eveningsRed)
+                    .onAppear {
+                        // Restart cleanly each time the lazy row comes back
+                        // on screen; a stale repeatForever dies with reuse.
+                        livePulse = false
+                        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                            livePulse = true
+                        }
+                    }
                     if let station = stream.station?.name, station != stream.displayName {
                         Text(station)
                             .font(.footnote)

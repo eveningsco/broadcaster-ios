@@ -2,7 +2,7 @@ import SwiftUI
 
 struct BroadcastView: View {
     enum StageMode: String, CaseIterable {
-        case record = "Record"
+        case record = "Offline"
         case live = "Live"
     }
 
@@ -16,6 +16,9 @@ struct BroadcastView: View {
     /// How far the library card has slid away (0...1); the content fades in
     /// with the drag itself rather than waiting for the commit.
     var revealProgress: Double = 1
+    /// Slides the library card back over the stage (the button mirrors the
+    /// leftward swipe).
+    var onBack: (() -> Void)? = nil
     @State private var mode: StageMode = .record
     @State private var listeners: Int?
     @State private var now = Date()
@@ -107,6 +110,23 @@ struct BroadcastView: View {
 
             Spacer()
             Spacer()
+
+            if let onBack {
+                Button(action: onBack) {
+                    HStack(spacing: 6) {
+                        Text("Library")
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                    }
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(24)
         // Everything on the stage fades in as it's revealed (the backdrop
