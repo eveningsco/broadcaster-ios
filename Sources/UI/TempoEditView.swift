@@ -11,9 +11,12 @@ private enum TempoHaptics {
 }
 
 /// Live varispeed preview of one track, streamed — playback starts in
-/// seconds instead of waiting for a full download. AVPlayer's `.varispeed`
-/// pitch algorithm behaves like a turntable's pitch fader: speed and pitch
-/// move together with the rate. The full file is only downloaded on save.
+/// seconds instead of waiting for a full download, yet played through an
+/// AVAudioEngine varispeed graph so wheel movements bend the audio within a
+/// render quantum (~6 ms) — the turntable-under-your-finger feel AVPlayer's
+/// rate property can't deliver. The track streams to a temp file while a
+/// feeder decodes the growing file into 1-second buffers scheduled a few
+/// seconds ahead of the playhead.
 @MainActor
 final class TempoPreview: ObservableObject {
     @Published private(set) var isReady = false
@@ -22,95 +25,353 @@ final class TempoPreview: ObservableObject {
     @Published private(set) var progress: Double = 0
     @Published private(set) var duration: TimeInterval = 0
     @Published var rate: Double = 1 {
-        didSet {
-            // Setting a non-zero rate starts playback, so only push it
-            // through while already playing.
-            if isPlaying {
-                player.rate = Float(rate)
+        didSet { varispeed.rate = Float(rate) }
+    }
+
+    /// The fully-downloaded original once the stream finishes; the save
+    /// path uses it to skip a second download.
+    private(set) var completedFileURL: URL?
+
+    private let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private let varispeed = AVAudioUnitVarispeed()
+
+    /// The growing temp download (or the local file itself for drafts).
+    private var localURL: URL?
+    private var ownsLocalFile = false
+    private var format: AVAudioFormat?
+    private var sampleRate: Double = 44_100
+    /// Estimated until the download completes, then exact.
+    private var totalFrames: AVAudioFramePosition = 0
+    private var downloadComplete = false
+
+    private var downloadTask: Task<Void, Never>?
+    private var feederTask: Task<Void, Never>?
+    private var ticker: Timer?
+
+    /// Where the current play run began, in source frames; the player node
+    /// reports time relative to this.
+    private var startFrame: AVAudioFramePosition = 0
+    private var pausedFrame: AVAudioFramePosition = 0
+    /// Source frame the feeder has scheduled up to.
+    private var scheduledEnd: AVAudioFramePosition = 0
+    /// Buffers scheduled but not yet consumed by the player.
+    private var pendingChunks = 0
+    /// True when the feeder has scheduled everything through end of track.
+    private var feederDone = false
+    /// Invalidates stale feeders and buffer callbacks after stop/seek.
+    private var generation = UUID()
+
+    private let chunkSeconds = 1.0
+
+    func load(url: URL, fallbackDuration: TimeInterval) async {
+        duration = fallbackDuration
+        if url.isFileURL {
+            localURL = url
+            downloadComplete = true
+            completedFileURL = url
+            prepareGraphIfPossible()
+            return
+        }
+
+        let ext = url.pathExtension.isEmpty ? "mp3" : url.pathExtension
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tempo-src-\(UUID().uuidString)")
+            .appendingPathExtension(ext)
+        localURL = destination
+        ownsLocalFile = true
+
+        // Detached: the chunk loop must never run on the main actor, or a
+        // long download starves the UI (and itself).
+        downloadTask = Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                FileManager.default.createFile(atPath: destination.path, contents: nil)
+                let handle = try FileHandle(forWritingTo: destination)
+                defer { try? handle.close() }
+                var written = 0
+                var nextPrepareAt = 1 << 17
+                var ready = false
+                for try await event in AudioChunkStream.events(from: url) {
+                    guard case .chunk(let data) = event else { continue }
+                    try Task.checkCancellation()
+                    try handle.write(contentsOf: data)
+                    written += data.count
+                    // Until the graph is up, try opening the partial file
+                    // every 128 KB; once ready, stop hopping to main.
+                    if !ready, written >= nextPrepareAt {
+                        nextPrepareAt = written + (1 << 17)
+                        ready = await MainActor.run { [weak self] in
+                            self?.prepareGraphIfPossible()
+                            return self?.isReady ?? true
+                        }
+                    }
+                }
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.downloadComplete = true
+                    self.completedFileURL = destination
+                    self.prepareGraphIfPossible()
+                    // The full file is on disk; replace the estimate.
+                    if let file = try? AVAudioFile(forReading: destination) {
+                        self.totalFrames = file.length
+                        self.duration = Double(file.length) / file.processingFormat.sampleRate
+                    }
+                }
+            } catch {
+                // Streaming preview failed; the editor stays in its
+                // loading state. (Cancellation lands here too.)
             }
         }
     }
 
-    private let player = AVPlayer()
-    private var timeObserver: Any?
-    private var endObserver: NSObjectProtocol?
-
-    func load(url: URL, fallbackDuration: TimeInterval) async {
-        let asset = AVURLAsset(url: url)
-        let item = AVPlayerItem(asset: asset)
-        item.audioTimePitchAlgorithm = .varispeed
-        player.replaceCurrentItem(with: item)
-        duration = fallbackDuration
+    /// Builds the engine graph as soon as enough of the file is on disk for
+    /// the decoder to open it (a few hundred KB of MP3).
+    private func prepareGraphIfPossible() {
+        guard !isReady, let localURL,
+              let file = try? AVAudioFile(forReading: localURL) else { return }
+        let format = file.processingFormat
+        self.format = format
+        sampleRate = format.sampleRate
+        if downloadComplete {
+            totalFrames = file.length
+            duration = Double(file.length) / format.sampleRate
+        } else {
+            // A partial file underreports its length; trust the server's
+            // duration for the full span.
+            totalFrames = max(file.length, AVAudioFramePosition(duration * format.sampleRate))
+        }
+        engine.attach(player)
+        engine.attach(varispeed)
+        varispeed.rate = Float(rate)
+        // Explicit formats everywhere — varispeed refuses converting
+        // connections (kAudioUnitErr_FormatNotSupported).
+        engine.connect(player, to: varispeed, format: format)
+        engine.connect(varispeed, to: engine.mainMixerNode, format: format)
+        engine.prepare()
         isReady = true
-
-        timeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(value: 1, timescale: 30),
-            queue: .main
-        ) { [weak self] time in
-            Task { @MainActor in
-                guard let self, self.duration > 0 else { return }
-                self.progress = min(max(time.seconds / self.duration, 0), 1)
-            }
-        }
-        endObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: item,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.isPlaying = false
-                self?.progress = 1
-            }
-        }
-
-        // Refine the fallback duration in the background — never await it
-        // here: for a remote MP3, AVFoundation computes precise duration by
-        // scanning most of the file over HTTP, which can take minutes.
-        Task { [weak self] in
-            if let loaded = try? await asset.load(.duration), loaded.isNumeric, loaded.seconds > 0 {
-                self?.duration = loaded.seconds
-            }
-        }
     }
 
     func toggle() {
         if isPlaying {
             pause()
         } else {
-            // Same category the track player uses; takes over cleanly.
-            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-            try? AVAudioSession.sharedInstance().setActive(true)
-            if progress >= 1 {
-                player.seek(to: .zero)
+            var frame = pausedFrame
+            if totalFrames > 0, frame >= totalFrames {
+                frame = 0
             }
-            player.playImmediately(atRate: Float(rate))
-            isPlaying = true
+            play(from: frame)
         }
     }
 
     func pause() {
-        player.pause()
-        isPlaying = false
+        guard isPlaying else { return }
+        pausedFrame = currentFrame
+        stopPlayback()
+        updateProgress()
     }
 
     func seek(toFraction fraction: Double) {
-        guard duration > 0 else { return }
-        let time = CMTime(seconds: fraction * duration, preferredTimescale: 600)
-        progress = fraction
-        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        guard totalFrames > 0 else { return }
+        let frame = AVAudioFramePosition(fraction * Double(totalFrames))
+        if isPlaying {
+            play(from: frame)
+        } else {
+            pausedFrame = frame
+            progress = fraction
+        }
     }
 
     func teardown() {
-        player.pause()
-        if let timeObserver {
-            player.removeTimeObserver(timeObserver)
-            self.timeObserver = nil
+        downloadTask?.cancel()
+        stopPlayback()
+        engine.stop()
+        if ownsLocalFile, let localURL {
+            try? FileManager.default.removeItem(at: localURL)
         }
-        if let endObserver {
-            NotificationCenter.default.removeObserver(endObserver)
-            self.endObserver = nil
+        localURL = nil
+        completedFileURL = nil
+    }
+
+    // MARK: - Playback internals
+
+    private func play(from frame: AVAudioFramePosition) {
+        guard isReady else { return }
+        // Same category the track player uses; takes over cleanly.
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        if !engine.isRunning {
+            try? engine.start()
         }
-        player.replaceCurrentItem(with: nil)
+        generation = UUID()
+        player.stop()
+        pendingChunks = 0
+        feederDone = false
+        startFrame = frame
+        pausedFrame = frame
+        scheduledEnd = frame
+        player.play()
+        isPlaying = true
+        startFeeder()
+        startTicker()
+    }
+
+    private func stopPlayback() {
+        generation = UUID()
+        feederTask?.cancel()
+        player.stop()
+        isPlaying = false
+        ticker?.invalidate()
+    }
+
+    /// Keeps a few seconds of decoded audio scheduled ahead of the
+    /// playhead, reading from the still-growing download. When it hits the
+    /// download's edge it waits for more bytes; the audio pauses there and
+    /// resumes as the stream catches up.
+    private func startFeeder() {
+        feederTask?.cancel()
+        let token = generation
+        feederTask = Task { [weak self] in
+            while let self, !Task.isCancelled, self.generation == token {
+                if self.pendingChunks >= 3 {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    continue
+                }
+                guard let localURL = self.localURL, let format = self.format else { break }
+                let frames = AVAudioFrameCount(self.sampleRate * self.chunkSeconds)
+                if let chunk = Self.readChunk(url: localURL, from: self.scheduledEnd, frames: frames, format: format) {
+                    self.pendingChunks += 1
+                    self.scheduledEnd += AVAudioFramePosition(chunk.frameLength)
+                    self.player.scheduleBuffer(chunk, completionCallbackType: .dataConsumed) { _ in
+                        Task { @MainActor [weak self] in
+                            guard let self, self.generation == token else { return }
+                            self.pendingChunks -= 1
+                        }
+                    }
+                } else if self.downloadComplete {
+                    // Nothing left to read: the track is fully scheduled.
+                    self.feederDone = true
+                    break
+                } else {
+                    // Caught up with the download; wait for more bytes.
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                }
+            }
+        }
+    }
+
+    /// One decoded chunk from the (possibly still truncated) file. Reads
+    /// that run past the truncation point throw or come back empty; the
+    /// caller retries once more bytes land.
+    private nonisolated static func readChunk(
+        url: URL,
+        from frame: AVAudioFramePosition,
+        frames: AVAudioFrameCount,
+        format: AVAudioFormat
+    ) -> AVAudioPCMBuffer? {
+        guard let file = try? AVAudioFile(forReading: url),
+              frame < file.length,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else {
+            return nil
+        }
+        file.framePosition = frame
+        do {
+            try file.read(into: buffer, frameCount: frames)
+        } catch {
+            // Partial reads still fill the buffer up to the failure point.
+        }
+        return buffer.frameLength > 0 ? buffer : nil
+    }
+
+    /// Source frames consumed so far: the player node counts frames it has
+    /// handed to varispeed, which are source frames — so this advances
+    /// faster at higher rates. Clamped to what's actually scheduled so an
+    /// underrun at the download edge doesn't run the clock ahead.
+    private var currentFrame: AVAudioFramePosition {
+        guard isPlaying,
+              let nodeTime = player.lastRenderTime,
+              let playerTime = player.playerTime(forNodeTime: nodeTime) else {
+            return pausedFrame
+        }
+        return min(max(startFrame + playerTime.sampleTime, 0), scheduledEnd)
+    }
+
+    private func startTicker() {
+        ticker?.invalidate()
+        ticker = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.tick()
+            }
+        }
+    }
+
+    private func tick() {
+        updateProgress()
+        // End of track: everything scheduled and played through.
+        if isPlaying, feederDone, pendingChunks == 0, currentFrame >= scheduledEnd {
+            pausedFrame = totalFrames
+            stopPlayback()
+            progress = 1
+        }
+    }
+
+    private func updateProgress() {
+        guard totalFrames > 0 else { return }
+        progress = min(max(Double(currentFrame) / Double(totalFrames), 0), 1)
+    }
+}
+
+/// Native-speed chunked download stream. URLSession's AsyncBytes hands out
+/// one byte per iteration — CPU-bound and brutally slow in debug builds —
+/// so this wraps a data-task delegate that yields whole Data chunks as the
+/// network delivers them.
+enum AudioChunkStream {
+    enum Event {
+        case response(expectedBytes: Int64)
+        case chunk(Data)
+    }
+
+    static func events(from url: URL) -> AsyncThrowingStream<Event, Error> {
+        AsyncThrowingStream { continuation in
+            let delegate = Delegate(continuation: continuation)
+            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            let task = session.dataTask(with: url)
+            continuation.onTermination = { _ in
+                task.cancel()
+                session.finishTasksAndInvalidate()
+            }
+            task.resume()
+        }
+    }
+
+    private final class Delegate: NSObject, URLSessionDataDelegate {
+        private let continuation: AsyncThrowingStream<Event, Error>.Continuation
+
+        init(continuation: AsyncThrowingStream<Event, Error>.Continuation) {
+            self.continuation = continuation
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            dataTask: URLSessionDataTask,
+            didReceive response: URLResponse,
+            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+        ) {
+            continuation.yield(.response(expectedBytes: response.expectedContentLength))
+            completionHandler(.allow)
+        }
+
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+            continuation.yield(.chunk(data))
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            if let error {
+                continuation.finish(throwing: error)
+            } else {
+                continuation.finish()
+            }
+            session.finishTasksAndInvalidate()
+        }
     }
 }
 
@@ -121,8 +382,6 @@ enum TempoDownloader {
         from url: URL,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async throws -> URL {
-        let (bytes, response) = try await URLSession.shared.bytes(from: url)
-        let expected = response.expectedContentLength
         let ext = url.pathExtension.isEmpty ? "mp3" : url.pathExtension
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("tempo-\(UUID().uuidString)")
@@ -131,22 +390,19 @@ enum TempoDownloader {
         let handle = try FileHandle(forWritingTo: destination)
         defer { try? handle.close() }
 
-        var buffer = Data()
-        buffer.reserveCapacity(1 << 17)
+        var expected: Int64 = -1
         var received: Int64 = 0
-        for try await byte in bytes {
-            buffer.append(byte)
-            if buffer.count >= 1 << 17 {
-                try handle.write(contentsOf: buffer)
-                received += Int64(buffer.count)
-                buffer.removeAll(keepingCapacity: true)
+        for try await event in AudioChunkStream.events(from: url) {
+            switch event {
+            case .response(let expectedBytes):
+                expected = expectedBytes
+            case .chunk(let data):
+                try handle.write(contentsOf: data)
+                received += Int64(data.count)
                 if expected > 0 {
                     onProgress(Double(received) / Double(expected))
                 }
             }
-        }
-        if !buffer.isEmpty {
-            try handle.write(contentsOf: buffer)
         }
         return destination
     }
@@ -448,6 +704,11 @@ struct TempoEditSheet: View {
                 var ownsSource = false
                 if remote.isFileURL {
                     source = remote
+                } else if let finished = preview.completedFileURL {
+                    // The preview's stream already pulled the whole file;
+                    // don't download it twice. The sheet (and the temp
+                    // file) outlive the save, which blocks dismissal.
+                    source = finished
                 } else {
                     source = try await TempoDownloader.download(from: remote) { progress in
                         Task { @MainActor in
