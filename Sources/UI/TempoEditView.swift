@@ -53,8 +53,10 @@ final class TempoPreview: ObservableObject {
     /// reports time relative to this.
     private var startFrame: AVAudioFramePosition = 0
     private var pausedFrame: AVAudioFramePosition = 0
-    /// Source frame the feeder has scheduled up to.
-    private var scheduledEnd: AVAudioFramePosition = 0
+    /// Next source frame the feeder will read (wraps when looping).
+    private var feedFrame: AVAudioFramePosition = 0
+    /// Total frames scheduled since this play run began.
+    private var scheduledFrames: AVAudioFramePosition = 0
     /// Buffers scheduled but not yet consumed by the player.
     private var pendingChunks = 0
     /// True when the feeder has scheduled everything through end of track.
@@ -62,7 +64,19 @@ final class TempoPreview: ObservableObject {
     /// Invalidates stale feeders and buffer callbacks after stop/seek.
     private var generation = UUID()
 
+    /// Loop region for the trim editor, as fractions of the track; nil
+    /// plays straight through (the tempo editor's mode). Frames derive
+    /// from these whenever the total-length estimate improves.
+    private var loopFractions: (start: Double, end: Double)?
+    private var loopStart: AVAudioFramePosition = 0
+    private var loopEnd: AVAudioFramePosition = 0
+
     private let chunkSeconds = 1.0
+
+    var sourceFileURL: URL? { localURL }
+    var isDownloadComplete: Bool { downloadComplete }
+
+    private var isLooping: Bool { loopEnd > loopStart }
 
     func load(url: URL, fallbackDuration: TimeInterval) async {
         duration = fallbackDuration
@@ -115,6 +129,7 @@ final class TempoPreview: ObservableObject {
                     if let file = try? AVAudioFile(forReading: destination) {
                         self.totalFrames = file.length
                         self.duration = Double(file.length) / file.processingFormat.sampleRate
+                        self.applyLoopFrames()
                     }
                 }
             } catch {
@@ -148,7 +163,27 @@ final class TempoPreview: ObservableObject {
         engine.connect(player, to: varispeed, format: format)
         engine.connect(varispeed, to: engine.mainMixerNode, format: format)
         engine.prepare()
+        applyLoopFrames()
         isReady = true
+    }
+
+    /// Sets (or moves) the looping audition region. While playing, the run
+    /// restarts from the current position clamped into the new region.
+    func setLoop(startFraction: Double, endFraction: Double) {
+        loopFractions = (startFraction, endFraction)
+        applyLoopFrames()
+        if isPlaying {
+            play(from: currentFrame)
+        } else if totalFrames > 0 {
+            pausedFrame = min(max(pausedFrame, loopStart), loopEnd)
+            updateProgress()
+        }
+    }
+
+    private func applyLoopFrames() {
+        guard let loopFractions, totalFrames > 0 else { return }
+        loopStart = AVAudioFramePosition(loopFractions.start * Double(totalFrames))
+        loopEnd = AVAudioFramePosition(loopFractions.end * Double(totalFrames))
     }
 
     func toggle() {
@@ -177,8 +212,11 @@ final class TempoPreview: ObservableObject {
             play(from: frame)
         } else {
             pausedFrame = frame
-            progress = fraction
         }
+        // Reflect the new position in this same frame — waiting for the
+        // next ticker tick lets the needle flash at its old spot between
+        // scrub release and the first tick.
+        updateProgress()
     }
 
     func teardown() {
@@ -196,6 +234,10 @@ final class TempoPreview: ObservableObject {
 
     private func play(from frame: AVAudioFramePosition) {
         guard isReady else { return }
+        var frame = frame
+        if isLooping {
+            frame = min(max(frame, loopStart), max(loopStart, loopEnd - 1))
+        }
         // Same category the track player uses; takes over cleanly.
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -208,7 +250,8 @@ final class TempoPreview: ObservableObject {
         feederDone = false
         startFrame = frame
         pausedFrame = frame
-        scheduledEnd = frame
+        feedFrame = frame
+        scheduledFrames = 0
         player.play()
         isPlaying = true
         startFeeder()
@@ -226,7 +269,9 @@ final class TempoPreview: ObservableObject {
     /// Keeps a few seconds of decoded audio scheduled ahead of the
     /// playhead, reading from the still-growing download. When it hits the
     /// download's edge it waits for more bytes; the audio pauses there and
-    /// resumes as the stream catches up.
+    /// resumes as the stream catches up. With a loop region set, reads are
+    /// capped at the out-point and wrap back to the in-point — buffers
+    /// chain gaplessly, so the loop is seamless.
     private func startFeeder() {
         feederTask?.cancel()
         let token = generation
@@ -237,10 +282,18 @@ final class TempoPreview: ObservableObject {
                     continue
                 }
                 guard let localURL = self.localURL, let format = self.format else { break }
-                let frames = AVAudioFrameCount(self.sampleRate * self.chunkSeconds)
-                if let chunk = Self.readChunk(url: localURL, from: self.scheduledEnd, frames: frames, format: format) {
+                var frames = AVAudioFrameCount(self.sampleRate * self.chunkSeconds)
+                if self.isLooping {
+                    let toLoopEnd = max(1, self.loopEnd - self.feedFrame)
+                    frames = AVAudioFrameCount(min(AVAudioFramePosition(frames), toLoopEnd))
+                }
+                if let chunk = Self.readChunk(url: localURL, from: self.feedFrame, frames: frames, format: format) {
                     self.pendingChunks += 1
-                    self.scheduledEnd += AVAudioFramePosition(chunk.frameLength)
+                    self.scheduledFrames += AVAudioFramePosition(chunk.frameLength)
+                    self.feedFrame += AVAudioFramePosition(chunk.frameLength)
+                    if self.isLooping, self.feedFrame >= self.loopEnd {
+                        self.feedFrame = self.loopStart
+                    }
                     self.player.scheduleBuffer(chunk, completionCallbackType: .dataConsumed) { _ in
                         Task { @MainActor [weak self] in
                             guard let self, self.generation == token else { return }
@@ -248,6 +301,18 @@ final class TempoPreview: ObservableObject {
                         }
                     }
                 } else if self.downloadComplete {
+                    if self.isLooping, self.feedFrame != self.loopStart {
+                        // The out-point sits past the file's real end (the
+                        // length was an estimate) — wrap instead of ending.
+                        self.feedFrame = self.loopStart
+                        continue
+                    }
+                    guard !self.isLooping else {
+                        // Loop region unreadable even from its start;
+                        // nothing to schedule.
+                        try? await Task.sleep(nanoseconds: 150_000_000)
+                        continue
+                    }
                     // Nothing left to read: the track is fully scheduled.
                     self.feederDone = true
                     break
@@ -285,14 +350,21 @@ final class TempoPreview: ObservableObject {
     /// Source frames consumed so far: the player node counts frames it has
     /// handed to varispeed, which are source frames — so this advances
     /// faster at higher rates. Clamped to what's actually scheduled so an
-    /// underrun at the download edge doesn't run the clock ahead.
+    /// underrun at the download edge doesn't run the clock ahead. With a
+    /// loop active, elapsed frames fold back into the region.
     private var currentFrame: AVAudioFramePosition {
         guard isPlaying,
               let nodeTime = player.lastRenderTime,
               let playerTime = player.playerTime(forNodeTime: nodeTime) else {
             return pausedFrame
         }
-        return min(max(startFrame + playerTime.sampleTime, 0), scheduledEnd)
+        let elapsed = min(max(playerTime.sampleTime, 0), scheduledFrames)
+        if isLooping {
+            let length = loopEnd - loopStart
+            guard length > 0 else { return loopStart }
+            return loopStart + (startFrame - loopStart + elapsed) % length
+        }
+        return max(startFrame + elapsed, 0)
     }
 
     private func startTicker() {
@@ -306,8 +378,12 @@ final class TempoPreview: ObservableObject {
 
     private func tick() {
         updateProgress()
-        // End of track: everything scheduled and played through.
-        if isPlaying, feederDone, pendingChunks == 0, currentFrame >= scheduledEnd {
+        // End of track: everything scheduled and played through. A loop
+        // never ends on its own.
+        if isPlaying, !isLooping, feederDone, pendingChunks == 0,
+           let nodeTime = player.lastRenderTime,
+           let playerTime = player.playerTime(forNodeTime: nodeTime),
+           playerTime.sampleTime >= scheduledFrames {
             pausedFrame = totalFrames
             stopPlayback()
             progress = 1

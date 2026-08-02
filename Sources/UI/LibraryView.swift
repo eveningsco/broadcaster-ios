@@ -22,6 +22,7 @@ struct LibraryListView: View {
     @State private var trackPendingDelete: LibraryTrack?
     @State private var trackToEdit: LibraryTrack?
     @State private var trackToRetempo: LibraryTrack?
+    @State private var trackToTrim: LibraryTrack?
     @State private var draftPendingDelete: Draft?
 
     private var trimmedQuery: String {
@@ -152,9 +153,13 @@ struct LibraryListView: View {
                             guard !model.broadcast.state.isActive else { return }
                             trackToRetempo = track
                         } : nil,
+                        onTrim: track.owner == true && track.audioURL != nil ? {
+                            guard !model.broadcast.state.isActive else { return }
+                            trackToTrim = track
+                        } : nil,
                         onDelete: track.owner == true ? { trackPendingDelete = track } : nil,
                         onRemove: track.owner != true ? { remove(track) } : nil,
-                        onShare: track.owner != true && track.webURL != nil ? { copyLink(for: track) } : nil
+                        onShare: track.webURL != nil ? { copyLink(for: track) } : nil
                     )
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)
@@ -211,6 +216,9 @@ struct LibraryListView: View {
         .sheet(item: $trackToRetempo) { track in
             TempoEditSheet(track: track)
         }
+        .sheet(item: $trackToTrim) { track in
+            TrimEditSheet(track: track)
+        }
     }
 
     // Wrapped in a scroll view so pull-to-refresh can retry a failed load.
@@ -252,6 +260,7 @@ struct TrackRow: View {
     var showsListens = true
     var onEdit: (() -> Void)?
     var onTempo: (() -> Void)?
+    var onTrim: (() -> Void)?
     var onDelete: (() -> Void)?
     var onSave: (() -> Void)?
     var onRemove: (() -> Void)?
@@ -276,7 +285,7 @@ struct TrackRow: View {
                 }
             }
             Spacer()
-            if onEdit != nil || onTempo != nil || onDelete != nil || onSave != nil || onRemove != nil || onShare != nil {
+            if onEdit != nil || onTempo != nil || onTrim != nil || onDelete != nil || onSave != nil || onRemove != nil || onShare != nil {
                 Menu {
                     if let onSave {
                         Button(action: onSave) {
@@ -296,6 +305,11 @@ struct TrackRow: View {
                     if let onTempo {
                         Button(action: onTempo) {
                             Label("Adjust Tempo", systemImage: "speedometer")
+                        }
+                    }
+                    if let onTrim {
+                        Button(action: onTrim) {
+                            Label("Trim", systemImage: "scissors")
                         }
                     }
                     if let onRemove {
