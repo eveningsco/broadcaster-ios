@@ -1,4 +1,11 @@
 import SwiftUI
+import UIKit
+
+/// A firm thump for the stage's main commitment — starting or stopping a
+/// recording or broadcast.
+private enum StageHaptics {
+    static let press = UIImpactFeedbackGenerator(style: .medium)
+}
 
 struct BroadcastView: View {
     enum StageMode: String, CaseIterable {
@@ -268,6 +275,7 @@ struct BroadcastView: View {
     }
 
     private func primaryAction() {
+        StageHaptics.press.impactOccurred()
         if mode == .record {
             if recorder.state.isRecording {
                 if let url = recorder.stop() {
