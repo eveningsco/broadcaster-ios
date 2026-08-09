@@ -78,6 +78,26 @@ final class TempoPreview: ObservableObject {
 
     private var isLooping: Bool { loopEnd > loopStart }
 
+    /// Audible-scrub state: while the finger drags the waveform, playback
+    /// follows it — forward audio moving right, reversed audio moving left,
+    /// resampled to the drag speed like shuttling tape.
+    private var isScrubbing = false
+    private var scrubFile: AVAudioFile?
+    private var scrubLastFrame: AVAudioFramePosition = 0
+    private var scrubLastTime: CFAbsoluteTime = 0
+    private var scrubPending = 0
+    private var wasPlayingBeforeScrub = false
+    /// Smoothed playback speed while scrubbing; pitch follows the finger's
+    /// velocity through this.
+    private var scrubSpeed = 1.0
+
+    /// Scrub gearing: dragging this fraction of the strip per second plays
+    /// at normal pitch. Faster drags pitch up (to the cap), slower drags
+    /// sink toward the floor.
+    private static let referenceScrubSpeed = 0.25
+    private static let minScrubSpeed = 0.15
+    private static let maxScrubSpeed = 3.0
+
     func load(url: URL, fallbackDuration: TimeInterval) async {
         duration = fallbackDuration
         if url.isFileURL {
@@ -187,6 +207,7 @@ final class TempoPreview: ObservableObject {
     }
 
     func toggle() {
+        guard !isScrubbing else { return }
         if isPlaying {
             pause()
         } else {
@@ -199,14 +220,14 @@ final class TempoPreview: ObservableObject {
     }
 
     func pause() {
-        guard isPlaying else { return }
+        guard isPlaying, !isScrubbing else { return }
         pausedFrame = currentFrame
         stopPlayback()
         updateProgress()
     }
 
     func seek(toFraction fraction: Double) {
-        guard totalFrames > 0 else { return }
+        guard totalFrames > 0, !isScrubbing else { return }
         let frame = AVAudioFramePosition(fraction * Double(totalFrames))
         if isPlaying {
             play(from: frame)
@@ -221,6 +242,8 @@ final class TempoPreview: ObservableObject {
 
     func teardown() {
         downloadTask?.cancel()
+        isScrubbing = false
+        scrubFile = nil
         stopPlayback()
         engine.stop()
         if ownsLocalFile, let localURL {
@@ -228,6 +251,169 @@ final class TempoPreview: ObservableObject {
         }
         localURL = nil
         completedFileURL = nil
+    }
+
+    // MARK: - Audible scrubbing
+
+    func beginScrub() {
+        guard isReady, !isScrubbing, let localURL else { return }
+        wasPlayingBeforeScrub = isPlaying
+        scrubLastFrame = currentFrame
+        scrubLastTime = CFAbsoluteTimeGetCurrent()
+        // Take over the player node for ad-hoc scrub buffers; normal
+        // playback resumes from wherever the finger lets go.
+        generation = UUID()
+        feederTask?.cancel()
+        ticker?.invalidate()
+        player.stop()
+        scrubPending = 0
+        scrubSpeed = 1
+        scrubFile = try? AVAudioFile(forReading: localURL)
+        isScrubbing = true
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        if !engine.isRunning {
+            try? engine.start()
+        }
+        player.play()
+    }
+
+    func scrubTo(fraction: Double) {
+        guard isScrubbing, let scrubFile, let format, totalFrames > 0 else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        let dt = min(max(now - scrubLastTime, 0.01), 0.2)
+        let target = min(
+            AVAudioFramePosition(fraction * Double(totalFrames)),
+            max(0, scrubFile.length - 1)
+        )
+        progress = min(max(fraction, 0), 1)
+        let delta = target - scrubLastFrame
+        // Sub-audible movement: let it accumulate until it's worth a sound.
+        guard abs(delta) > 128 else { return }
+        scrubLastTime = now
+        if scrubPending >= 4 {
+            // Scheduling backlog — skip this segment rather than lag.
+            scrubLastFrame = target
+            return
+        }
+        // Pitch rides the finger's velocity: gesture speed relative to the
+        // reference gearing sets the resample ratio, smoothed so touch
+        // jitter doesn't warble. Raw track-per-point physics would pin a
+        // zoomed-out strip at chipmunk speeds, so the gearing is gestural,
+        // not physical. Position still glues to the finger — fast flicks
+        // skip audio rather than compressing it.
+        let outputFrames = AVAudioFramePosition(max(256, Int(dt * sampleRate)))
+        let fractionPerSecond = abs(Double(delta) / Double(totalFrames)) / dt
+        let rawSpeed = min(
+            max(fractionPerSecond / Self.referenceScrubSpeed, Self.minScrubSpeed),
+            Self.maxScrubSpeed
+        )
+        scrubSpeed = scrubSpeed * 0.5 + rawSpeed * 0.5
+        let span = max(128, AVAudioFramePosition(Double(outputFrames) * scrubSpeed))
+        let readStart = delta >= 0 ? target - span : target
+        guard readStart >= 0,
+              let source = Self.readFrames(
+                file: scrubFile,
+                from: readStart,
+                frames: AVAudioFrameCount(span),
+                format: format
+              ),
+              let buffer = Self.makeScrubBuffer(
+                from: source,
+                outputFrames: AVAudioFrameCount(outputFrames),
+                reversed: delta < 0,
+                format: format
+              ) else {
+            scrubLastFrame = target
+            return
+        }
+        scrubPending += 1
+        player.scheduleBuffer(buffer, completionCallbackType: .dataConsumed) { _ in
+            Task { @MainActor [weak self] in
+                self?.scrubPending -= 1
+            }
+        }
+        scrubLastFrame = target
+    }
+
+    func endScrub(at fraction: Double) {
+        guard isScrubbing else { return }
+        isScrubbing = false
+        scrubFile = nil
+        player.stop()
+        guard totalFrames > 0 else { return }
+        let frame = AVAudioFramePosition(min(max(fraction, 0), 1) * Double(totalFrames))
+        if wasPlayingBeforeScrub {
+            play(from: frame)
+        } else {
+            pausedFrame = frame
+        }
+        updateProgress()
+    }
+
+    /// Random-access read from the persistent scrub handle.
+    private nonisolated static func readFrames(
+        file: AVAudioFile,
+        from frame: AVAudioFramePosition,
+        frames: AVAudioFrameCount,
+        format: AVAudioFormat
+    ) -> AVAudioPCMBuffer? {
+        guard frame >= 0, frame < file.length, frames > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else {
+            return nil
+        }
+        file.framePosition = frame
+        do {
+            try file.read(into: buffer, frameCount: frames)
+        } catch {
+            // Truncated reads keep whatever decoded; silence past the edge.
+        }
+        return buffer.frameLength > 0 ? buffer : nil
+    }
+
+    /// Squeezes (or stretches) the dragged-over source span into a buffer
+    /// lasting as long as the drag segment did — the resampling IS the
+    /// scratch pitch. Reversed spans read back to front, and short linear
+    /// ramps at both ends keep chunk seams from clicking.
+    private nonisolated static func makeScrubBuffer(
+        from source: AVAudioPCMBuffer,
+        outputFrames: AVAudioFrameCount,
+        reversed: Bool,
+        format: AVAudioFormat
+    ) -> AVAudioPCMBuffer? {
+        let n = Int(source.frameLength)
+        let m = Int(outputFrames)
+        guard n > 1, m > 0,
+              let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: outputFrames),
+              let src = source.floatChannelData,
+              let dst = out.floatChannelData else {
+            return nil
+        }
+        let channels = Int(format.channelCount)
+        let rampLength = min(64, m / 4)
+        for o in 0..<m {
+            var position = Double(o) / Double(max(1, m - 1)) * Double(n - 1)
+            if reversed {
+                position = Double(n - 1) - position
+            }
+            let i0 = Int(position)
+            let i1 = min(i0 + 1, n - 1)
+            let t = Float(position - Double(i0))
+            var ramp: Float = 1
+            if rampLength > 0 {
+                if o < rampLength {
+                    ramp = Float(o) / Float(rampLength)
+                } else if o >= m - rampLength {
+                    ramp = Float(m - 1 - o) / Float(rampLength)
+                }
+            }
+            for channel in 0..<channels {
+                let sample = src[channel][i0] * (1 - t) + src[channel][i1] * t
+                dst[channel][o] = sample * ramp
+            }
+        }
+        out.frameLength = outputFrames
+        return out
     }
 
     // MARK: - Playback internals
@@ -353,6 +539,9 @@ final class TempoPreview: ObservableObject {
     /// underrun at the download edge doesn't run the clock ahead. With a
     /// loop active, elapsed frames fold back into the region.
     private var currentFrame: AVAudioFramePosition {
+        if isScrubbing {
+            return scrubLastFrame
+        }
         guard isPlaying,
               let nodeTime = player.lastRenderTime,
               let playerTime = player.playerTime(forNodeTime: nodeTime) else {
@@ -621,7 +810,9 @@ struct TempoEditSheet: View {
                         TempoWaveform(
                             levels: waveform.levels,
                             progress: preview.progress,
-                            onScrub: { preview.seek(toFraction: $0) },
+                            onScrubBegin: { preview.beginScrub() },
+                            onScrubMove: { preview.scrubTo(fraction: $0) },
+                            onScrub: { preview.endScrub(at: $0) },
                             isScrubbing: $isScrubbing
                         )
                     } else {
@@ -832,11 +1023,22 @@ struct TempoEditSheet: View {
                     }
                 }
                 let baseTitle = track.title ?? "Untitled"
-                try? await api.updateTrackTitle(
-                    id: uploaded.id,
-                    title: "\(baseTitle) (\(percent)%)",
-                    accessToken: token
-                )
+                if track.owner != true {
+                    // Someone else's track: name it a remix and stamp
+                    // provenance in the description.
+                    try? await api.updateTrack(
+                        id: uploaded.id,
+                        title: "\(baseTitle) (remix \(percent)%)",
+                        description: TrimEditSheet.remixCredit(for: track),
+                        accessToken: token
+                    )
+                } else {
+                    try? await api.updateTrackTitle(
+                        id: uploaded.id,
+                        title: "\(baseTitle) (\(percent)%)",
+                        accessToken: token
+                    )
+                }
                 await model.loadLibrary()
                 TempoHaptics.confirm.notificationOccurred(.success)
                 dismiss()
@@ -866,6 +1068,9 @@ struct TempoWaveform: View {
     /// while levels are still computing.
     let levels: [Float]?
     let progress: Double
+    /// Finger touched down / is moving — drives the audible scrub.
+    var onScrubBegin: (() -> Void)?
+    var onScrubMove: ((Double) -> Void)?
     let onScrub: (Double) -> Void
     @Binding var isScrubbing: Bool
 
@@ -902,10 +1107,12 @@ struct TempoWaveform: View {
                     .onChanged { value in
                         if !isScrubbing {
                             Self.tick.prepare()
+                            onScrubBegin?()
                         }
                         isScrubbing = true
                         let fraction = min(max(value.location.x / width, 0), 1)
                         scrubFraction = fraction
+                        onScrubMove?(fraction)
                         let bar = min(barCount - 1, Int(fraction * Double(barCount)))
                         if bar != lastTickedBar {
                             if lastTickedBar != nil {

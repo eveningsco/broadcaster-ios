@@ -531,11 +531,22 @@ struct TrimEditSheet: View {
                     }
                 }
                 let baseTitle = track.title ?? "Untitled"
-                try? await api.updateTrackTitle(
-                    id: uploaded.id,
-                    title: "\(baseTitle) (trimmed)",
-                    accessToken: token
-                )
+                if track.owner != true {
+                    // Someone else's track: name it a remix and stamp
+                    // provenance in the description.
+                    try? await api.updateTrack(
+                        id: uploaded.id,
+                        title: "\(baseTitle) (remix)",
+                        description: Self.remixCredit(for: track),
+                        accessToken: token
+                    )
+                } else {
+                    try? await api.updateTrackTitle(
+                        id: uploaded.id,
+                        title: "\(baseTitle) (trimmed)",
+                        accessToken: token
+                    )
+                }
                 await model.loadLibrary()
                 TrimHaptics.confirm.notificationOccurred(.success)
                 dismiss()
@@ -555,6 +566,15 @@ struct TrimEditSheet: View {
         return h > 0
             ? String(format: "%d:%02d:%02d", h, m, s)
             : String(format: "%d:%02d", m, s)
+    }
+
+    /// Provenance line for a remix of another station's track.
+    static func remixCredit(for track: LibraryTrack) -> String {
+        let station = track.station?.name ?? "another station"
+        if let url = track.webURL {
+            return "Remixed from \(station) (\(url.absoluteString))"
+        }
+        return "Remixed from \(station)"
     }
 }
 

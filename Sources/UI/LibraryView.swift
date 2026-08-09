@@ -148,12 +148,15 @@ struct LibraryListView: View {
                         track: track,
                         isPlaying: model.player.playingKey == TrackPlayer.key(for: track),
                         onEdit: track.owner == true ? { trackToEdit = track } : nil,
-                        onTempo: track.owner == true && track.audioURL != nil ? {
+                        // Editing is open to saved tracks from other stations
+                        // too — the result uploads as your own private track
+                        // (a remix), leaving the original untouched.
+                        onTempo: track.audioURL != nil ? {
                             // The mic owns the audio session while broadcasting.
                             guard !model.broadcast.state.isActive else { return }
                             trackToRetempo = track
                         } : nil,
-                        onTrim: track.owner == true && track.audioURL != nil ? {
+                        onTrim: track.audioURL != nil ? {
                             guard !model.broadcast.state.isActive else { return }
                             trackToTrim = track
                         } : nil,
