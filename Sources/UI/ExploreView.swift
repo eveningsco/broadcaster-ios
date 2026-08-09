@@ -114,7 +114,7 @@ struct ExploreListView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(.subheadline.weight(.semibold))
+            .font(.social(.subheadline, weight: .bold))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)
@@ -131,10 +131,10 @@ struct ExploreListView: View {
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
                     Text("Nothing to explore yet")
-                        .font(.headline)
+                        .font(.social(.headline, weight: .bold))
                     if let error = model.exploreError {
                         Text(error)
-                            .font(.footnote)
+                            .font(.social(.footnote))
                             .foregroundStyle(Color.eveningsRed)
                             .multilineTextAlignment(.center)
                     }
@@ -163,7 +163,7 @@ struct StreamRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(stream.displayName)
-                    .font(.body.weight(.medium))
+                    .font(.social(.body, weight: .medium))
                     .foregroundStyle(isPlaying ? Color.accentColor : .primary)
                     .lineLimit(1)
                 HStack(spacing: 6) {
@@ -172,7 +172,7 @@ struct StreamRow: View {
                             .opacity(livePulse ? 0.3 : 1)
                         Text("LIVE")
                     }
-                    .font(.caption2.weight(.bold))
+                    .font(.social(.caption2, weight: .bold))
                     .foregroundStyle(Color.eveningsRed)
                     .onAppear {
                         // Restart cleanly each time the lazy row comes back
@@ -184,7 +184,7 @@ struct StreamRow: View {
                     }
                     if let station = stream.station?.name, station != stream.displayName {
                         Text(station)
-                            .font(.footnote)
+                            .font(.social(.footnote))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }

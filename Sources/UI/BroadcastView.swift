@@ -90,27 +90,27 @@ struct BroadcastView: View {
                 VStack(spacing: 6) {
                     ProgressView(value: uploads.uploadProgress)
                     Text("Saving to your library…")
-                        .font(.footnote)
+                        .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 8)
             } else if let uploadError = uploads.uploadError, mode == .record {
                 Text("Saved on this phone — upload from the library when you're back online. (\(uploadError))")
-                    .font(.footnote)
+                    .font(.social(.footnote))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
 
             if let error = broadcast.lastError, case .reconnecting = broadcast.state {
                 Text(error)
-                    .font(.footnote)
+                    .font(.social(.footnote))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
 
             if let recorderError = recorder.lastError, mode == .record {
                 Text(recorderError)
-                    .font(.footnote)
+                    .font(.social(.footnote))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
@@ -125,7 +125,7 @@ struct BroadcastView: View {
                         Image(systemName: "chevron.right")
                             .font(.caption2)
                     }
-                    .font(.footnote.weight(.medium))
+                    .font(.social(.footnote, weight: .medium))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -161,7 +161,7 @@ struct BroadcastView: View {
         HStack {
             if let slug = model.credentials?.station?.slug {
                 Text("evenings.fm/\(slug)")
-                    .font(.footnote)
+                    .font(.social(.footnote))
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -194,7 +194,7 @@ struct BroadcastView: View {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.caption2)
             }
-            .font(.footnote.weight(.medium))
+            .font(.social(.footnote, weight: .medium))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -212,7 +212,7 @@ struct BroadcastView: View {
     private var statusBadge: some View {
         if recorder.state.isRecording {
             Label("RECORDING", systemImage: "record.circle.fill")
-                .font(.headline)
+                .font(.social(.headline, weight: .bold))
                 .foregroundStyle(Color.eveningsRed)
         } else {
             broadcastBadge
@@ -231,7 +231,7 @@ struct BroadcastView: View {
                 .foregroundStyle(.orange)
         case .live:
             Label("LIVE", systemImage: "dot.radiowaves.left.and.right")
-                .font(.headline)
+                .font(.social(.headline, weight: .bold))
                 .foregroundStyle(Color.eveningsRed)
         case .reconnecting(let attempt):
             Label("Reconnecting (attempt \(attempt))…", systemImage: "arrow.clockwise")

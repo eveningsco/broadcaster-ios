@@ -31,6 +31,9 @@ targets:
           - et-book-semi-bold-old-style-figures.ttf
           - et-book-bold-line-figures.ttf
           - OCRAEXT.TTF
+          - ABCSocial-Regular.ttf
+          - ABCSocial-Medium.ttf
+          - ABCSocial-Bold.ttf
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1"

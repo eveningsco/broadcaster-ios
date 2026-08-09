@@ -833,7 +833,7 @@ struct TempoEditSheet: View {
                     Text(percent == 100
                          ? " "
                          : "\(Self.format(preview.duration)) → \(Self.format(preview.duration / preview.rate))")
-                        .font(.footnote)
+                        .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
@@ -903,24 +903,24 @@ struct TempoEditSheet: View {
             case .downloading(let progress):
                 ProgressView(value: progress) {
                     Text("Downloading original…")
-                        .font(.footnote)
+                        .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                 }
             case .rendering(let progress):
                 ProgressView(value: progress) {
                     Text("Rendering at \(percent)%…")
-                        .font(.footnote)
+                        .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                 }
             case .uploading(let progress):
                 ProgressView(value: progress) {
                     Text("Uploading new version…")
-                        .font(.footnote)
+                        .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                 }
             case .failed(let message):
                 Text(message)
-                    .font(.footnote)
+                    .font(.social(.footnote))
                     .foregroundStyle(Color.eveningsRed)
             case .idle:
                 EmptyView()
@@ -928,7 +928,7 @@ struct TempoEditSheet: View {
 
             Button(action: save) {
                 Text(percent == 100 ? "Save New Version" : "Save New Version at \(percent)%")
-                    .font(.body.weight(.semibold))
+                    .font(.social(.body, weight: .bold))
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
                     .background(Color.eveningsRed)
@@ -1166,7 +1166,7 @@ struct SpeedWheel: View {
     var body: some View {
         HStack(spacing: 16) {
             Text("Speed")
-                .font(.subheadline)
+                .font(.social(.subheadline))
                 .foregroundStyle(.secondary)
 
             GeometryReader { geometry in
@@ -1201,7 +1201,7 @@ struct SpeedWheel: View {
             .frame(height: 52)
 
             Text("\(Int((value * 100).rounded()))%")
-                .font(.subheadline.weight(.medium))
+                .font(.social(.subheadline, weight: .medium))
                 .monospacedDigit()
                 .frame(width: 52, alignment: .trailing)
         }

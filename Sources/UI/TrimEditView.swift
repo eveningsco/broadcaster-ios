@@ -317,7 +317,7 @@ struct TrimEditSheet: View {
                 Text(Self.format(selectedDuration))
                     .font(.system(.body, design: .monospaced))
                 Text("selected")
-                    .font(.caption2)
+                    .font(.social(.caption2))
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -366,7 +366,7 @@ struct TrimEditSheet: View {
                 .buttonStyle(.plain)
             }
             Text(label)
-                .font(.caption2)
+                .font(.social(.caption2))
                 .foregroundStyle(.secondary)
         }
     }
@@ -407,24 +407,24 @@ struct TrimEditSheet: View {
             case .downloading(let progress):
                 ProgressView(value: progress) {
                     Text("Downloading original…")
-                        .font(.footnote)
+                        .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                 }
             case .rendering(let progress):
                 ProgressView(value: progress) {
                     Text("Trimming…")
-                        .font(.footnote)
+                        .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                 }
             case .uploading(let progress):
                 ProgressView(value: progress) {
                     Text("Uploading trimmed version…")
-                        .font(.footnote)
+                        .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                 }
             case .failed(let message):
                 Text(message)
-                    .font(.footnote)
+                    .font(.social(.footnote))
                     .foregroundStyle(Color.eveningsRed)
             case .idle:
                 EmptyView()
@@ -432,7 +432,7 @@ struct TrimEditSheet: View {
 
             Button(action: save) {
                 Text("Save Trimmed Version")
-                    .font(.body.weight(.semibold))
+                    .font(.social(.body, weight: .bold))
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
                     .background(Color.eveningsRed)

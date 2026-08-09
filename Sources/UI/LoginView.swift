@@ -11,7 +11,7 @@ struct LoginView: View {
 
             VStack(spacing: 8) {
                 Text("Evenings")
-                    .font(.largeTitle.weight(.bold))
+                    .font(.social(.largeTitle, weight: .bold))
                 Text("Broadcast from anywhere")
                     .foregroundStyle(.secondary)
             }
@@ -33,7 +33,7 @@ struct LoginView: View {
 
             if let error = model.loginError {
                 Text(error)
-                    .font(.callout)
+                    .font(.social(.callout))
                     .foregroundStyle(Color.eveningsRed)
                     .multilineTextAlignment(.center)
             }
@@ -46,7 +46,7 @@ struct LoginView: View {
                         ProgressView()
                     } else {
                         Text("Log In")
-                            .font(.headline)
+                            .font(.social(.headline, weight: .bold))
                     }
                 }
                 .frame(maxWidth: .infinity)

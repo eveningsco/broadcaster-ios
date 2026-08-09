@@ -28,6 +28,9 @@
 		<string>et-book-semi-bold-old-style-figures.ttf</string>
 		<string>et-book-bold-line-figures.ttf</string>
 		<string>OCRAEXT.TTF</string>
+		<string>ABCSocial-Regular.ttf</string>
+		<string>ABCSocial-Medium.ttf</string>
+		<string>ABCSocial-Bold.ttf</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>

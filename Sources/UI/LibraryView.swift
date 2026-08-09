@@ -77,7 +77,7 @@ struct LibraryListView: View {
     private var draftsSection: some View {
         VStack(spacing: 0) {
             Text("On this phone")
-                .font(.subheadline.weight(.semibold))
+                .font(.social(.subheadline, weight: .bold))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
@@ -182,7 +182,7 @@ struct LibraryListView: View {
 
                 if !trimmedQuery.isEmpty, filteredLibrary.isEmpty, filteredDrafts.isEmpty {
                     Text("No tracks match \"\(trimmedQuery)\"")
-                        .font(.footnote)
+                        .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 24)
                 }
@@ -233,14 +233,14 @@ struct LibraryListView: View {
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
                     Text("No recordings yet")
-                        .font(.headline)
+                        .font(.social(.headline, weight: .bold))
                     Text("Your broadcasts are recorded automatically and will show up here.")
-                        .font(.footnote)
+                        .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                     if let error = model.libraryError {
                         Text(error)
-                            .font(.footnote)
+                            .font(.social(.footnote))
                             .foregroundStyle(Color.eveningsRed)
                     }
                 }
@@ -274,15 +274,15 @@ struct TrackRow: View {
             artwork
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.title ?? "Untitled")
-                    .font(.body.weight(.medium))
+                    .font(.social(.body, weight: .medium))
                     .foregroundStyle(isPlaying ? Color.accentColor : .primary)
                     .lineLimit(1)
                 Text(subtitle)
-                    .font(.footnote)
+                    .font(.social(.footnote))
                     .foregroundStyle(.secondary)
                 if showsTags, !visibleTags.isEmpty {
                     Text(visibleTags.map { "#\($0)" }.joined(separator: " "))
-                        .font(.caption)
+                        .font(.social(.caption))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
@@ -407,7 +407,7 @@ struct EditTrackSheet: View {
                 if let saveError {
                     Section {
                         Text(saveError)
-                            .font(.footnote)
+                            .font(.social(.footnote))
                             .foregroundStyle(Color.eveningsRed)
                     }
                 }
@@ -468,13 +468,13 @@ struct DraftRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(draft.title)
-                    .font(.body.weight(.medium))
+                    .font(.social(.body, weight: .medium))
                     .lineLimit(1)
                 if isUploading {
                     ProgressView(value: uploadProgress)
                 } else {
                     Text("Not in your library yet")
-                        .font(.footnote)
+                        .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                 }
             }

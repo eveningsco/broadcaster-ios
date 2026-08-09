@@ -452,11 +452,11 @@ struct HomeBottomBar: View {
                         // Paused: the scrubber gives way to what's queued up.
                         VStack(alignment: .leading, spacing: 2) {
                             Text(nowPlaying.title)
-                                .font(.footnote.weight(.medium))
+                                .font(.social(.footnote, weight: .medium))
                                 .lineLimit(1)
                             if let station = nowPlaying.station {
                                 Text(station)
-                                    .font(.caption)
+                                    .font(.social(.caption))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
