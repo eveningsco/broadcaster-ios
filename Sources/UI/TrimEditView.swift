@@ -167,12 +167,7 @@ enum TrimRenderer {
             let destination = FileManager.default.temporaryDirectory
                 .appendingPathComponent("trim-render-\(UUID().uuidString)")
                 .appendingPathExtension("m4a")
-            let output = try AVAudioFile(forWriting: destination, settings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: format.sampleRate,
-                AVNumberOfChannelsKey: format.channelCount,
-                AVEncoderBitRateKey: Config.audioBitrate,
-            ])
+            let output = try AACBufferWriter(url: destination, source: format)
             let capacity: AVAudioFrameCount = 1 << 16
             guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
                 throw RenderError.emptySelection
@@ -186,10 +181,11 @@ enum TrimRenderer {
                 let count = AVAudioFrameCount(min(AVAudioFramePosition(capacity), remaining))
                 try file.read(into: buffer, frameCount: count)
                 if buffer.frameLength == 0 { break }
-                try output.write(from: buffer)
+                try output.write(buffer)
                 remaining -= AVAudioFramePosition(buffer.frameLength)
                 onProgress(1 - Double(remaining) / Double(totalOut))
             }
+            try output.finish()
             return destination
         }.value
     }

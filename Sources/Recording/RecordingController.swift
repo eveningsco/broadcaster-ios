@@ -19,8 +19,12 @@ final class RecordingController: ObservableObject {
     @Published private(set) var lastError: String?
 
     private let broadcast: BroadcastController
-    private var file: AVAudioFile?
+    private var writer: AACBufferWriter?
     private var fileURL: URL?
+
+    /// One bad buffer can be a transient glitch; this many in a row means the
+    /// file is not being written at all (e.g. a format the encoder rejects).
+    private static let maxConsecutiveWriteFailures = 5
 
     static let recordingsDirectory: URL = {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -50,7 +54,8 @@ final class RecordingController: ObservableObject {
         // Detach the sink first; the last in-flight write finishes before the
         // file reference is released (AVAudioFile finalizes on dealloc).
         broadcast.bufferSink.set(nil)
-        file = nil
+        try? writer?.finish()
+        writer = nil
         broadcast.releaseCapture()
         state = .idle
 
@@ -70,34 +75,32 @@ final class RecordingController: ObservableObject {
             let format = broadcast.captureFormat
             let url = Self.recordingsDirectory
                 .appendingPathComponent("\(Self.defaultTitle(for: Date())).m4a")
-            let settings: [String: Any] = [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: format.sampleRate,
-                AVNumberOfChannelsKey: format.channelCount,
-                AVEncoderBitRateKey: Config.audioBitrate,
-            ]
-            let file = try AVAudioFile(
-                forWriting: url,
-                settings: settings,
-                commonFormat: format.commonFormat,
-                interleaved: format.isInterleaved
-            )
+            let writer = try AACBufferWriter(url: url, source: format)
 
-            self.file = file
+            self.writer = writer
             self.fileURL = url
 
+            var consecutiveFailures = 0
             broadcast.bufferSink.set { [weak self] buffer, _ in
                 // Audio thread. A format change (route switch mid-recording)
                 // can't be written to this file — end the recording honestly
                 // instead of writing garbage.
-                guard buffer.format == file.processingFormat else {
+                guard buffer.format == format else {
                     Task { @MainActor in self?.endForFormatChange() }
                     return
                 }
                 do {
-                    try file.write(from: buffer)
+                    try writer.write(buffer)
+                    consecutiveFailures = 0
                 } catch {
-                    Task { @MainActor in self?.lastError = error.localizedDescription }
+                    consecutiveFailures += 1
+                    let failures = consecutiveFailures
+                    Task { @MainActor in
+                        self?.lastError = error.localizedDescription
+                        if failures >= Self.maxConsecutiveWriteFailures {
+                            self?.endForWriteFailures()
+                        }
+                    }
                 }
             }
 
@@ -105,7 +108,7 @@ final class RecordingController: ObservableObject {
         } catch {
             lastError = "Could not start recording: \(error.localizedDescription)"
             broadcast.bufferSink.set(nil)
-            file = nil
+            writer = nil
             fileURL = nil
         }
     }
@@ -113,6 +116,12 @@ final class RecordingController: ObservableObject {
     private func endForFormatChange() {
         guard state.isRecording else { return }
         lastError = "Audio input changed — recording saved up to that point."
+        onAutoStopped?(stop())
+    }
+
+    private func endForWriteFailures() {
+        guard state.isRecording else { return }
+        lastError = "Recording stopped: audio could not be written to the file."
         onAutoStopped?(stop())
     }
 

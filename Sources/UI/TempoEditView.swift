@@ -724,12 +724,7 @@ enum TempoRenderer {
             let destination = FileManager.default.temporaryDirectory
                 .appendingPathComponent("tempo-render-\(UUID().uuidString)")
                 .appendingPathExtension("m4a")
-            let output = try AVAudioFile(forWriting: destination, settings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: file.processingFormat.sampleRate,
-                AVNumberOfChannelsKey: file.processingFormat.channelCount,
-                AVEncoderBitRateKey: Config.audioBitrate,
-            ])
+            let output = try AACBufferWriter(url: destination, source: engine.manualRenderingFormat)
             guard let buffer = AVAudioPCMBuffer(
                 pcmFormat: engine.manualRenderingFormat,
                 frameCapacity: engine.manualRenderingMaximumFrameCount
@@ -747,7 +742,7 @@ enum TempoRenderer {
                 let status = try engine.renderOffline(count, to: buffer)
                 switch status {
                 case .success:
-                    try output.write(from: buffer)
+                    try output.write(buffer)
                     onProgress(Double(engine.manualRenderingSampleTime) / Double(targetFrames))
                 case .insufficientDataFromInputNode, .cannotDoInCurrentContext:
                     continue
@@ -759,6 +754,7 @@ enum TempoRenderer {
             }
             player.stop()
             engine.stop()
+            try output.finish()
             return destination
         }.value
     }
