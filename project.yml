@@ -43,3 +43,6 @@ targets:
         MARKETING_VERSION: "0.1.0"
         DEVELOPMENT_TEAM: 3BBF83PB2F
         CODE_SIGN_STYLE: Automatic
+        # User-visible product name; the target keeps its longer internal name
+        # so the bundle ID stays co.evenings.EveningsBroadcaster.
+        PRODUCT_NAME: Evenings
