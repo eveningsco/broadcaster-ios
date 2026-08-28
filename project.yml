@@ -22,9 +22,15 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: Evenings
+        # Reference the build settings so version bumps live in one place.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # HTTPS-only; exempt from export compliance so uploads skip the question.
         ITSAppUsesNonExemptEncryption: false
         NSMicrophoneUsageDescription: Evenings uses the microphone to broadcast live audio to your station.
+        # Never requested at runtime; the streaming library references camera
+        # APIs, and App Store validation requires a purpose string for that.
+        NSCameraUsageDescription: Evenings broadcasts audio only and does not use the camera.
         UIBackgroundModes: [audio]
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
@@ -39,8 +45,8 @@ targets:
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1"
-        CURRENT_PROJECT_VERSION: "1"
-        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "2"
+        MARKETING_VERSION: "1.0"
         DEVELOPMENT_TEAM: 3BBF83PB2F
         CODE_SIGN_STYLE: Automatic
         # User-visible product name; the target keeps its longer internal name
