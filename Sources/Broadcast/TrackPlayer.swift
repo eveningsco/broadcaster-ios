@@ -11,6 +11,10 @@ final class TrackPlayer: ObservableObject {
     @Published private(set) var playingKey: String?
     /// Playback position as a 0...1 fraction of the track's duration.
     @Published private(set) var progress: Double = 0
+    /// Seeks in flight. AVPlayer seeks are async, and until one lands the
+    /// periodic observer still reports the old position — publishing those
+    /// stale ticks yanks the needle back right after a scrub release.
+    private var pendingSeeks = 0
     /// True while the loaded track is paused (still loaded, not stopped).
     @Published private(set) var isPaused = false
     /// Key of the track that loops when it ends. Looping is per-track:
@@ -84,6 +88,7 @@ final class TrackPlayer: ObservableObject {
         self.player = player
         playingKey = key
         progress = 0
+        pendingSeeks = 0
         isPaused = false
         trackTitle = title
         trackArtist = artist
@@ -130,7 +135,10 @@ final class TrackPlayer: ObservableObject {
         guard playingKey != nil, let player else { return }
         // Replaying from the end: rewind first.
         if progress >= 0.999 {
-            player.seek(to: .zero)
+            pendingSeeks += 1
+            player.seek(to: .zero) { [weak self] _ in
+                Task { @MainActor in self?.pendingSeeks -= 1 }
+            }
             progress = 0
         }
         // Mic monitoring may have owned the session in between; take it back.
@@ -149,11 +157,14 @@ final class TrackPlayer: ObservableObject {
         guard duration.isFinite, duration > 0 else { return }
         let clamped = min(max(fraction, 0), 1)
         progress = clamped
+        pendingSeeks += 1
         player.seek(
             to: CMTime(seconds: duration * clamped, preferredTimescale: 600),
             toleranceBefore: .zero,
             toleranceAfter: .zero
-        )
+        ) { [weak self] _ in
+            Task { @MainActor in self?.pendingSeeks -= 1 }
+        }
         publishNowPlaying()
     }
 
@@ -164,6 +175,8 @@ final class TrackPlayer: ObservableObject {
     }
 
     private func updateProgress(currentTime: Double) {
+        // Stale ticks while a seek is settling would drag the needle back.
+        guard pendingSeeks == 0 else { return }
         guard let duration = player?.currentItem?.duration.seconds,
               duration.isFinite, duration > 0 else { return }
         progress = min(max(currentTime / duration, 0), 1)
@@ -179,7 +192,10 @@ final class TrackPlayer: ObservableObject {
         if isLoopingCurrent, let player {
             // actionAtItemEnd is .none, so the player is still rolling —
             // rewinding is all it takes.
-            player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+            pendingSeeks += 1
+            player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                Task { @MainActor in self?.pendingSeeks -= 1 }
+            }
             progress = 0
             isPaused = false
         } else {
@@ -203,6 +219,7 @@ final class TrackPlayer: ObservableObject {
         player = nil
         playingKey = nil
         progress = 0
+        pendingSeeks = 0
         isPaused = false
         trackTitle = nil
         trackArtist = nil
