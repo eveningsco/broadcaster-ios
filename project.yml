@@ -22,6 +22,8 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: Evenings
+        # HTTPS-only; exempt from export compliance so uploads skip the question.
+        ITSAppUsesNonExemptEncryption: false
         NSMicrophoneUsageDescription: Evenings uses the microphone to broadcast live audio to your station.
         UIBackgroundModes: [audio]
         UILaunchScreen: {}
@@ -39,3 +41,5 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         CURRENT_PROJECT_VERSION: "1"
         MARKETING_VERSION: "0.1.0"
+        DEVELOPMENT_TEAM: 3BBF83PB2F
+        CODE_SIGN_STYLE: Automatic
