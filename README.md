@@ -72,6 +72,21 @@ Dependencies (HaishinKit) resolve via Swift Package Manager on first build.
 Simulator builds work but the simulator's mic pipeline is unreliable — test
 capture on a real device.
 
+## TestFlight builds
+
+`.github/workflows/testflight.yml` archives the app on a macOS runner and
+uploads it to TestFlight on every push to `main` or `claude/**` (and on demand
+from the Actions tab). Build numbers come from the run number, so they always
+increase. One-time setup:
+
+1. App Store Connect → Users and Access → Integrations → App Store Connect API:
+   create a key with the **Admin** role (needed for cloud-managed signing).
+2. Add repo secrets `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_KEY_P8` (the full
+   contents of the downloaded `.p8`).
+3. In TestFlight, add yourself to an internal testing group with automatic
+   distribution on; new builds then show up in the TestFlight app once
+   processed (~5–15 min after the run finishes).
+
 ## Not yet implemented (post-MVP)
 
 - Library screen (`GET /v1/library`) and post-broadcast "recording saved" flow
