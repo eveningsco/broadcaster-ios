@@ -80,6 +80,12 @@ struct BroadcastView: View {
                         Label("\(listeners) listening", systemImage: "ear")
                             .foregroundStyle(.secondary)
                     }
+                    if let warning = broadcast.audioWarning {
+                        Text(warning)
+                            .font(.social(.footnote))
+                            .foregroundStyle(.red)
+                            .multilineTextAlignment(.center)
+                    }
                 }
             } else if case .recording(let since) = recorder.state {
                 Text(elapsed(since: since))

@@ -2,6 +2,7 @@ import AVFAudio
 import Accelerate
 import Foundation
 import HaishinKit
+import os
 import RTMPHaishinKit
 
 /// Thread-safe holder for an audio-thread buffer consumer (the recording file
@@ -56,6 +57,10 @@ final class BroadcastController: ObservableObject {
     @Published private(set) var availableInputs: [AVAudioSessionPortDescription] = []
     /// UID of the port currently feeding the input route.
     @Published private(set) var currentInputUID: String?
+    /// Set while live when the connection is up but audio isn't reaching the
+    /// server (the encoder produced nothing), so the host doesn't broadcast
+    /// dead air thinking they're on.
+    @Published private(set) var audioWarning: String?
 
     private let engine = AVAudioEngine()
     private var connection: RTMPConnection?
@@ -70,6 +75,8 @@ final class BroadcastController: ObservableObject {
 
     /// Buffers fan out here on the audio thread (recording file writer).
     let bufferSink = AudioSinkBox()
+    /// Normalizes capture for the RTMP encoder; used only on the audio thread.
+    private let streamConformer = StreamAudioConformer()
 
     var captureFormat: AVAudioFormat {
         engine.inputNode.outputFormat(forBus: 0)
@@ -139,6 +146,7 @@ final class BroadcastController: ObservableObject {
         // The broadcast session owns capture from here on.
         isMonitoring = false
         lastError = nil
+        audioWarning = nil
         state = .connecting
 
         sessionTask = Task { [weak self] in
@@ -154,6 +162,7 @@ final class BroadcastController: ObservableObject {
         Task {
             await teardownStream()
             stopCapture()
+            audioWarning = nil
             state = .idle
         }
     }
@@ -202,13 +211,11 @@ final class BroadcastController: ObservableObject {
         self.connection = connection
         self.stream = stream
 
-        // HaishinKit defaults the encoder's sample rate to the input's. Apple's
-        // AAC encoder tops out at 48 kHz, so a 96 kHz interface (Luna) gets a
-        // converter that silently fails: publish succeeds, no audio is sent.
-        // Pin it, matching AACBufferWriter's clamp for recordings.
+        // StreamAudioConformer already hands the encoder 48 kHz; pinning it
+        // here too keeps the AAC config stable if that ever changes.
         let audioSettings = AudioCodecSettings(
             bitRate: Config.audioBitrate,
-            sampleRate: AACBufferWriter.maxSampleRate
+            sampleRate: StreamAudioConformer.sampleRate
         )
         try await stream.setAudioSettings(audioSettings)
 
@@ -217,14 +224,31 @@ final class BroadcastController: ObservableObject {
     }
 
     /// Poll the connection until it drops; throwing hands control back to the
-    /// reconnect loop.
+    /// reconnect loop. Also watches outgoing bytes: a publish with no audio
+    /// sends only a few hundred bytes of handshake and metadata, while audio
+    /// at the configured bitrate sends thousands per second.
     private func watchConnection() async throws {
+        let publishedAt = Date()
+        let startBytes = await stream?.info.byteCount ?? 0
         while !Task.isCancelled {
             try await Task.sleep(nanoseconds: 2_000_000_000)
             guard let connection else { throw URLError(.networkConnectionLost) }
             let connected = await connection.connected
             if !connected {
                 throw URLError(.networkConnectionLost)
+            }
+            let elapsed = Date().timeIntervalSince(publishedAt)
+            let sent = (await stream?.info.byteCount ?? 0) - startBytes
+            // Expect at least a quarter of the nominal rate once the encoder
+            // has had a few seconds to start.
+            let expected = Double(Config.audioBitrate) / 8 * elapsed / 4
+            if elapsed >= 6 {
+                if Double(sent) < expected, audioWarning == nil {
+                    Self.log.error("No audio reaching server: \(sent) bytes in \(Int(elapsed))s")
+                }
+                audioWarning = Double(sent) < expected
+                    ? "Live, but no audio is reaching Evenings. Check the input and try going live again."
+                    : nil
             }
         }
         throw CancellationError()
@@ -258,16 +282,21 @@ final class BroadcastController: ObservableObject {
         guard !engine.isRunning else { return }
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
+        let route = AVAudioSession.sharedInstance().currentRoute.inputs.first
+        Self.log.info("Capture: \(route?.portName ?? "unknown", privacy: .public) \(format, privacy: .public)")
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, when in
             guard let self else { return }
             self.bufferSink.send(buffer, when)
             let level = Self.rmsDb(buffer)
+            // Convert here, on the audio thread: the result is a fresh buffer
+            // that stays valid after the engine recycles the tap's.
+            let converted = self.streamConformer.convert(buffer, when: when)
             Task { @MainActor in
                 // Light smoothing so the meter doesn't flicker.
                 self.levelDb = max(level, self.levelDb - 3)
-                if let stream = self.stream {
-                    await stream.append(buffer, when: when)
+                if let stream = self.stream, let (streamBuffer, streamTime) = converted {
+                    await stream.append(streamBuffer, when: streamTime)
                 }
             }
         }
@@ -331,6 +360,8 @@ final class BroadcastController: ObservableObject {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         levelDb = -160
     }
+
+    private static let log = Logger(subsystem: "co.evenings.EveningsBroadcaster", category: "broadcast")
 
     private nonisolated static func rmsDb(_ buffer: AVAudioPCMBuffer) -> Float {
         guard let channels = buffer.floatChannelData, buffer.frameLength > 0 else { return -160 }
