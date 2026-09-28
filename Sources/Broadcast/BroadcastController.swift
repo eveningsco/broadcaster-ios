@@ -202,8 +202,14 @@ final class BroadcastController: ObservableObject {
         self.connection = connection
         self.stream = stream
 
-        var audioSettings = AudioCodecSettings()
-        audioSettings.bitRate = Config.audioBitrate
+        // HaishinKit defaults the encoder's sample rate to the input's. Apple's
+        // AAC encoder tops out at 48 kHz, so a 96 kHz interface (Luna) gets a
+        // converter that silently fails: publish succeeds, no audio is sent.
+        // Pin it, matching AACBufferWriter's clamp for recordings.
+        let audioSettings = AudioCodecSettings(
+            bitRate: Config.audioBitrate,
+            sampleRate: AACBufferWriter.maxSampleRate
+        )
         try await stream.setAudioSettings(audioSettings)
 
         _ = try await connection.connect(Config.rtmpURL)
