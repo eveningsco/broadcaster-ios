@@ -74,7 +74,7 @@ struct HomeView: View {
                 )
                 .padding(.top, geometry.safeAreaInsets.top)
                 .padding(.bottom, geometry.safeAreaInsets.bottom)
-                .background(Color(red: 0x15 / 255, green: 0x15 / 255, blue: 0x12 / 255))
+                .background(Color.eveningsStage)
                 // The stage brightens as the card slides away — depth without
                 // any scaling, so the screen edges never move.
                 .opacity(0.7 + 0.3 * progress)

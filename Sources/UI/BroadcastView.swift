@@ -142,6 +142,11 @@ struct BroadcastView: View {
             }
         }
         .padding(24)
+        // The stage is always dark (see HomeView's backdrop), so resolve every
+        // semantic color — .primary/.secondary text, the segmented control,
+        // the capsule fills — against dark, whatever the system appearance.
+        // Without this, light mode draws black text on the near-black stage.
+        .environment(\.colorScheme, .dark)
         // Everything on the stage fades in as it's revealed (the backdrop
         // stays put; only the content fades). Tracks the drag 1:1; the
         // release spring animates the rest via the enclosing transaction.
@@ -206,6 +211,9 @@ struct BroadcastView: View {
             .padding(.vertical, 8)
             .background(Capsule().fill(Color.primary.opacity(0.08)))
         }
+        // Menu labels take the tint (system blue) over foregroundStyle; keep
+        // it in the same muted ink as the Library pill.
+        .tint(Color(.secondaryLabel))
     }
 
     private var currentInputName: String {
