@@ -4,6 +4,9 @@ import SwiftUI
 extension Color {
     /// Brand red used for all red text (#FF5C25).
     static let eveningsRed = Color(red: 0xFF / 255, green: 0x5C / 255, blue: 0x25 / 255)
+    /// Near-black backdrop of the livestream stage (#151512). Always dark,
+    /// regardless of system appearance — content on it renders in dark mode.
+    static let eveningsStage = Color(red: 0x15 / 255, green: 0x15 / 255, blue: 0x12 / 255)
 }
 
 enum Config {
