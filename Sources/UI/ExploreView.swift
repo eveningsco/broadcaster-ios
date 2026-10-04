@@ -14,6 +14,8 @@ struct ExploreListView: View {
     @EnvironmentObject private var model: AppModel
     /// True while the home swipe-away gesture is engaged.
     var scrollLocked = false
+    /// Track whose detail sheet is open (tapped cover).
+    @State private var trackToShow: LibraryTrack?
 
     var body: some View {
         Group {
@@ -65,7 +67,11 @@ struct ExploreListView: View {
                             showsTags: true,
                             showsListens: false,
                             onSave: canSave(track) ? { save(track) } : nil,
-                            onShare: track.webURL != nil ? { copyLink(for: track) } : nil
+                            onShare: track.webURL != nil ? { copyLink(for: track) } : nil,
+                            onOpenDetails: {
+                                ExploreHaptics.select.impactOccurred()
+                                trackToShow = track
+                            }
                         )
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)
@@ -91,6 +97,9 @@ struct ExploreListView: View {
         }
         .refreshable {
             await model.loadExplore()
+        }
+        .sheet(item: $trackToShow) { track in
+            TrackDetailSheet(track: track, player: model.player)
         }
     }
 

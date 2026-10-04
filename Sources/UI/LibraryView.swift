@@ -24,6 +24,9 @@ struct LibraryListView: View {
     /// Screenshot mode's `edit` scenes open the editor on the first track.
     @State private var trackToEditAudio: LibraryTrack? =
         ScreenshotMode.scene?.opensEditor == true ? ScreenshotFixtures.library.first : nil
+    /// Screenshot mode's `track` scene opens the detail sheet on the first track.
+    @State private var trackToShow: LibraryTrack? =
+        ScreenshotMode.scene?.opensDetails == true ? ScreenshotFixtures.library.first : nil
     @State private var draftPendingDelete: Draft?
 
     private var trimmedQuery: String {
@@ -160,7 +163,11 @@ struct LibraryListView: View {
                         } : nil,
                         onDelete: track.owner == true ? { trackPendingDelete = track } : nil,
                         onRemove: track.owner != true ? { remove(track) } : nil,
-                        onShare: track.webURL != nil ? { copyLink(for: track) } : nil
+                        onShare: track.webURL != nil ? { copyLink(for: track) } : nil,
+                        onOpenDetails: {
+                            LibraryHaptics.select.impactOccurred()
+                            trackToShow = track
+                        }
                     )
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)
@@ -217,6 +224,9 @@ struct LibraryListView: View {
         .sheet(item: $trackToEditAudio) { track in
             AudioEditSheet(track: track)
         }
+        .sheet(item: $trackToShow) { track in
+            TrackDetailSheet(track: track, player: model.player)
+        }
     }
 
     // Wrapped in a scroll view so pull-to-refresh can retry a failed load.
@@ -262,10 +272,21 @@ struct TrackRow: View {
     var onSave: (() -> Void)?
     var onRemove: (() -> Void)?
     var onShare: (() -> Void)?
+    /// Tapping the cover opens the track detail sheet; the rest of the row
+    /// still toggles playback (the list's tap gesture).
+    var onOpenDetails: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 12) {
-            artwork
+            if let onOpenDetails {
+                Button(action: onOpenDetails) {
+                    artwork
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Track details")
+            } else {
+                artwork
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.title ?? "Untitled")
                     .font(.social(.body, weight: .medium))
@@ -495,6 +516,9 @@ struct DraftRow: View {
 /// success, static waveform for tracks with no cover (or a failed load).
 struct TrackArtwork: View {
     let url: URL?
+    /// Size of the waveform glyph in the no-cover state; the detail sheet's
+    /// large cover passes a bigger one so it doesn't float as a speck.
+    var symbolFont: Font = .body
     @State private var pulsing = false
 
     var body: some View {
@@ -532,6 +556,7 @@ struct TrackArtwork: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(.quaternary)
             Image(systemName: "waveform")
+                .font(symbolFont)
                 .foregroundStyle(.secondary)
         }
     }

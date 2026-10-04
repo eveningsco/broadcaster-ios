@@ -80,8 +80,9 @@ struct AccountSheet: View {
 
 /// Opaque sheet background: the system's translucent sheet lets the go-live
 /// circle and the list rows bleed through behind the title. The modifier
-/// arrived in iOS 16.4; earlier systems keep the default.
-private struct OpaqueSheetBackground: ViewModifier {
+/// arrived in iOS 16.4; earlier systems keep the default. Shared by the
+/// account and track detail sheets.
+struct OpaqueSheetBackground: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 16.4, *) {
             content.presentationBackground(Color(.secondarySystemBackground))
