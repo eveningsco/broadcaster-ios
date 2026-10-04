@@ -26,10 +26,10 @@ on:
         description: "Simulator device name"
         default: "iPhone 16 Pro"
       appearance:
-        description: "System appearance"
+        description: "System appearance (the app forces dark; light renders identically)"
         type: choice
         options: [light, dark, both]
-        default: light
+        default: dark
 
 jobs:
   screenshots:

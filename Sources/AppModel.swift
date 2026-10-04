@@ -33,8 +33,12 @@ final class AppModel: ObservableObject {
     private let api = EveningsAPI()
 
     init() {
-        credentials = Keychain.load()
         recorder = RecordingController(broadcast: broadcast)
+        if let scene = ScreenshotMode.scene {
+            applyScreenshotScene(scene)
+        } else {
+            credentials = Keychain.load()
+        }
         uploads.freshAccessToken = { [weak self] in
             await self?.ensureFreshSession()
             return self?.credentials?.accessToken
@@ -45,6 +49,25 @@ final class AppModel: ObservableObject {
             }
         }
         uploads.loadDrafts()
+    }
+
+    /// Screenshot mode (debug launches with `-screenshot <scene>`): stand in
+    /// fixture data for the Keychain and the API so every screen renders
+    /// without an account. The load* methods below become no-ops.
+    private func applyScreenshotScene(_ scene: ScreenshotMode.Scene) {
+        guard scene.isSignedIn else { return }
+        credentials = ScreenshotFixtures.credentials
+        library = ScreenshotFixtures.library
+        exploreTracks = ScreenshotFixtures.exploreTracks
+        exploreStreams = ScreenshotFixtures.exploreStreams
+        switch scene {
+        case .stage:
+            broadcast.setScreenshotState(.idle, levelDb: -27)
+        case .live:
+            broadcast.setScreenshotState(.live(since: ScreenshotFixtures.liveSince), levelDb: -14)
+        case .login, .library, .explore:
+            break
+        }
     }
 
     /// A recording just ended: register it as a draft and try to upload it.
@@ -100,7 +123,7 @@ final class AppModel: ObservableObject {
     }
 
     func loadExplore() async {
-        guard credentials != nil, !isLoadingExplore else { return }
+        guard credentials != nil, !isLoadingExplore, !ScreenshotMode.isActive else { return }
         isLoadingExplore = true
         defer { isLoadingExplore = false }
         await ensureFreshSession()
@@ -182,7 +205,7 @@ final class AppModel: ObservableObject {
     }
 
     func loadLibrary() async {
-        guard credentials != nil, !isLoadingLibrary else { return }
+        guard credentials != nil, !isLoadingLibrary, !ScreenshotMode.isActive else { return }
         isLoadingLibrary = true
         defer { isLoadingLibrary = false }
         await ensureFreshSession()
@@ -282,10 +305,5 @@ final class AppModel: ObservableObject {
         } catch {
             // Network hiccup: keep the session; the stream key rarely rotates.
         }
-    }
-
-    func fetchStatus() async -> StreamStatus? {
-        guard let channelId = credentials?.channelId else { return nil }
-        return try? await api.status(channelId: channelId)
     }
 }

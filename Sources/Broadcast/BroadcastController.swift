@@ -154,6 +154,13 @@ final class BroadcastController: ObservableObject {
         }
     }
 
+    /// Screenshot mode only (see ScreenshotMode): show a broadcast state and
+    /// meter level without touching the audio session or the network.
+    func setScreenshotState(_ state: BroadcastState, levelDb: Float) {
+        self.state = state
+        self.levelDb = levelDb
+    }
+
     func stop() {
         guard state.isActive else { return }
         state = .stopping

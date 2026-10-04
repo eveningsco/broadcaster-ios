@@ -72,6 +72,58 @@ Dependencies (HaishinKit) resolve via Swift Package Manager on first build.
 Simulator builds work but the simulator's mic pipeline is unreliable — test
 capture on a real device.
 
+## Screenshots
+
+Nobody needs a Mac to see the UI: the **Simulator Screenshots** GitHub Actions
+workflow builds the app on a macOS runner, boots an iPhone simulator and
+captures every screen to a PNG artifact.
+
+```sh
+# From any machine with python3 and a GitHub token with `repo` scope:
+GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch
+# → screenshots/{login,library,explore,stage,live}.png
+```
+
+> **Setup (once):** GitHub only knows about a `workflow_dispatch`-only
+> workflow once its file exists on the **default branch** (`main`) — until
+> then, dispatching by file name returns `404 Not Found` from the API and the
+> workflow is missing from the Actions tab. Land
+> `.github/workflows/simulator-screenshots.yml` on `main` once; after that
+> `--ref` can point at any branch that has the file.
+
+The workflow file is a thin wrapper; the actual steps (select Xcode, XcodeGen,
+`xcodebuild`, capture) live in `scripts/ci/simulator-screenshots-job.sh` so
+they can be changed without touching `.github/workflows/` (the forum agent's
+token lacks the `workflow` scope). `scripts/ci/simulator-screenshots.yml` is
+the source copy of the workflow — `cp` it over `.github/workflows/` when it
+changes. **Xcode 26 is required**: HaishinKit 2.2+ uses
+`kVTCompressionPropertyKey_VariableBitRate` (iOS 26 SDK), so the job script
+`xcode-select`s the newest `/Applications/Xcode_26*.app` — GitHub's `macos-15`
+image defaults to Xcode 16.4, which fails to compile HaishinKit.
+
+Or trigger it by hand (Actions → Simulator Screenshots → Run workflow) and
+download the `simulator-screenshots` artifact. A cold run takes ~8–12 minutes
+(SPM resolve + build dominate); macOS minutes bill at 10x Linux, so the
+workflow is manual-only rather than running on every push.
+
+The app supports a debug-only **screenshot mode** that makes this possible:
+launching with `-screenshot <scene>` renders that scene from fixture data
+(`Sources/Debug/ScreenshotMode.swift`) with no account, network, Keychain or
+microphone involved. Scenes: `login`, `library`, `explore`, `stage` (idle,
+"Go Live") and `live` (on air, timer, listeners). On a Mac:
+
+```sh
+xcodegen generate
+xcodebuild -scheme EveningsBroadcaster -configuration Debug \
+  -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData \
+  CODE_SIGNING_ALLOWED=NO build
+scripts/simulator-screenshots.sh \
+  build/DerivedData/Build/Products/Debug-iphonesimulator/Evenings.app screenshots
+```
+
+The mode is compiled out of Release builds. `docs/screenshots/` holds
+reference captures.
+
 ## Not yet implemented (post-MVP)
 
 - Library screen (`GET /v1/library`) and post-broadcast "recording saved" flow
