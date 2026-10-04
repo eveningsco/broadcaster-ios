@@ -102,9 +102,19 @@ struct HomeView: View {
                     // Recedes like a stacked sheet while the detail card
                     // is up and softens into the background; the card's
                     // frosted backdrop does the rest of the blur and dim.
+                    // The blur radius steps rather than tweens: re-blurring
+                    // the whole layer every frame is costly and the frost
+                    // above hides the step. The recession is stepped too in
+                    // screenshot mode — the CI simulator software-renders
+                    // the material over a moving layer so slowly that the
+                    // recording would skip the whole flight.
                     .blur(radius: heroExpanded ? 6 : 0)
+                    .animation(nil, value: heroExpanded)
                     .scaleEffect(heroExpanded ? 0.94 : 1)
-                    .animation(.spring(response: 0.45, dampingFraction: 0.84), value: heroExpanded)
+                    .animation(
+                        ScreenshotMode.isActive ? nil : .spring(response: 0.45, dampingFraction: 0.84),
+                        value: heroExpanded
+                    )
 
                 if let detail {
                     TrackDetailOverlay(

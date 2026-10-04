@@ -59,6 +59,10 @@ private struct SlotFrameKey: PreferenceKey {
 /// value-based spring between them. (Toggling `isSource` on two mounted
 /// matched views made the cover jump: SwiftUI only interpolates the
 /// non-source view, and the one becoming the source snaps to its layout.)
+/// Everything that moves is driven by `.animation(_, value: expanded)`
+/// rather than the `withAnimation` in `onAppear`: the CI recordings showed
+/// that transaction merging into the overlay's first render, so only the
+/// value-animated chrome moved.
 ///
 /// The card floats inset from the screen edges, bottom-anchored: title and
 /// byline, the cover, the description, a waveform scrubber with
@@ -182,7 +186,11 @@ struct TrackDetailOverlay: View {
                 Color.black.opacity(0.2)
             }
             .opacity(expanded ? 1 - dragProgress : 0)
-            .animation(expanded ? .easeOut(duration: 0.4) : .easeIn(duration: 0.3), value: expanded)
+            // Stepped in screenshot mode: see HomeView's library layer.
+            .animation(
+                ScreenshotMode.isActive ? nil : (expanded ? .easeOut(duration: 0.4) : .easeIn(duration: 0.3)),
+                value: expanded
+            )
             .ignoresSafeArea()
             .contentShape(Rectangle())
             .onTapGesture { dismiss() }
