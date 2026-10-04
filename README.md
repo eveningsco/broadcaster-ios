@@ -86,7 +86,7 @@ captures every screen to a PNG artifact.
 ```sh
 # From any machine with python3 and a GitHub token with `repo` scope:
 GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch
-# → screenshots/{login,signup,library,explore,stage,live}.png
+# → screenshots/{login,signup,library,explore,edit,stage,live}.png
 ```
 
 > **Setup (once):** GitHub only knows about a `workflow_dispatch`-only
@@ -115,7 +115,13 @@ The app supports a debug-only **screenshot mode** that makes this possible:
 launching with `-screenshot <scene>` renders that scene from fixture data
 (`Sources/Debug/ScreenshotMode.swift`) with no account, network, Keychain or
 microphone involved. Scenes: `login`, `signup` (account creation), `library`,
-`explore`, `stage` (idle, "Go Live") and `live` (on air, timer). On a Mac:
+`explore`, `edit` (the trim + tempo audio editor over the library), `stage`
+(idle, "Go Live") and `live` (on air, timer). Scenes ending in `-demo`
+animate instead of posing — `edit-demo` has the editor trim, audition and
+re-speed a track by itself with a ghost fingertip — and the capture script
+*records* them (`simctl io recordVideo`, ~18 s) into `<scene>.mov` plus an
+animated `<scene>.png`, so `--scenes edit-demo` yields a short video of the
+editor in motion. On a Mac:
 
 ```sh
 xcodegen generate
@@ -127,7 +133,9 @@ scripts/simulator-screenshots.sh \
 ```
 
 The mode is compiled out of Release builds. `docs/screenshots/` holds
-reference captures.
+reference captures and `docs/videos/` reference recordings
+(`edit-demo.{mp4,gif}`: the combined audio editor in motion, CI run
+37180113601, 2026-10-04).
 
 ## Not yet implemented (post-MVP)
 

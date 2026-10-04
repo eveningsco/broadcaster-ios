@@ -4,7 +4,7 @@ import UIKit
 
 /// Tap for transport, ticks while dragging handles, and a confirmation
 /// buzz when the trimmed version lands.
-private enum TrimHaptics {
+enum TrimHaptics {
     static let tap = UIImpactFeedbackGenerator(style: .light)
     static let grab = UIImpactFeedbackGenerator(style: .medium)
     static let tick = UISelectionFeedbackGenerator()
@@ -191,389 +191,6 @@ enum TrimRenderer {
     }
 }
 
-/// Full-page trim editor: the whole track in a fixed strip with in/out
-/// handles and a looping audition between them. Saving copies the selection
-/// into a new track next to the untouched original.
-struct TrimEditSheet: View {
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    let track: LibraryTrack
-
-    @StateObject private var preview = TempoPreview()
-    @StateObject private var waveform = IncrementalWaveform()
-    /// Selection as fractions of the track.
-    @State private var trimStart: Double = 0
-    @State private var trimEnd: Double = 1
-    @State private var saveState: SaveState = .idle
-
-    private let api = EveningsAPI()
-
-    enum SaveState: Equatable {
-        case idle
-        case downloading(Double)
-        case rendering(Double)
-        case uploading(Double)
-        case failed(String)
-    }
-
-    private var isSaving: Bool {
-        switch saveState {
-        case .downloading, .rendering, .uploading: return true
-        case .idle, .failed: return false
-        }
-    }
-
-    /// Selection must move before saving means anything.
-    private var hasSelection: Bool {
-        trimStart > 0.0005 || trimEnd < 0.9995
-    }
-
-    private var minGapFraction: Double {
-        preview.duration > 0 ? min(5 / preview.duration, 1) : 0.01
-    }
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 28) {
-                Spacer(minLength: 0)
-
-                Group {
-                    if preview.isReady {
-                        TrimStrip(
-                            start: $trimStart,
-                            end: $trimEnd,
-                            progress: preview.progress,
-                            levels: waveform.levels,
-                            minGap: minGapFraction,
-                            onScrub: { preview.seek(toFraction: $0) },
-                            onHandleMoved: { commitSelection() }
-                        )
-                    } else {
-                        ProgressView("Loading audio…")
-                    }
-                }
-                .frame(height: 132)
-
-                readouts
-
-                transport
-
-                Spacer(minLength: 0)
-
-                saveArea
-            }
-            .padding(24)
-            .navigationTitle("Trim")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .disabled(isSaving)
-                }
-            }
-            .interactiveDismissDisabled(isSaving)
-            .task {
-                // The mini player and the preview can't share the output.
-                model.player.pause()
-                guard let url = track.audioURL else { return }
-                await preview.load(url: url, fallbackDuration: TimeInterval(track.duration ?? 0))
-                preview.setLoop(startFraction: trimStart, endFraction: trimEnd)
-                if let fileURL = preview.sourceFileURL {
-                    waveform.begin(
-                        fileURL: fileURL,
-                        duration: TimeInterval(track.duration ?? 0),
-                        isComplete: { preview.isDownloadComplete }
-                    )
-                }
-            }
-            .onDisappear {
-                preview.teardown()
-                waveform.teardown()
-            }
-        }
-    }
-
-    private var selectedDuration: TimeInterval {
-        max(0, (trimEnd - trimStart) * preview.duration)
-    }
-
-    private var readouts: some View {
-        HStack(spacing: 0) {
-            nudger(
-                label: "In",
-                time: trimStart * preview.duration,
-                onNudge: { delta in
-                    let step = preview.duration > 0 ? delta / preview.duration : 0
-                    trimStart = min(max(trimStart + step, 0), trimEnd - minGapFraction)
-                    commitSelection()
-                }
-            )
-            Spacer()
-            VStack(spacing: 2) {
-                Text(Self.format(selectedDuration))
-                    .font(.system(.body, design: .monospaced))
-                Text("selected")
-                    .font(.social(.caption2))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            nudger(
-                label: "Out",
-                time: trimEnd * preview.duration,
-                onNudge: { delta in
-                    let step = preview.duration > 0 ? delta / preview.duration : 0
-                    trimEnd = min(max(trimEnd + step, trimStart + minGapFraction), 1)
-                    commitSelection()
-                }
-            )
-        }
-    }
-
-    /// A time readout flanked by ±1 s chevrons for fine adjustment — the
-    /// strip is far too coarse for second-level cuts on a long set.
-    private func nudger(
-        label: String,
-        time: TimeInterval,
-        onNudge: @escaping (Double) -> Void
-    ) -> some View {
-        VStack(spacing: 2) {
-            HStack(spacing: 10) {
-                Button {
-                    TrimHaptics.tick.selectionChanged()
-                    onNudge(-1)
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.footnote.weight(.semibold))
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                Text(Self.format(time))
-                    .font(.system(.body, design: .monospaced))
-                Button {
-                    TrimHaptics.tick.selectionChanged()
-                    onNudge(1)
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            Text(label)
-                .font(.social(.caption2))
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var transport: some View {
-        HStack(spacing: 12) {
-            Button {
-                TrimHaptics.tap.impactOccurred()
-                preview.seek(toFraction: trimStart)
-            } label: {
-                Image(systemName: "backward.end.fill")
-                    .font(.title3)
-                    .frame(width: 64, height: 48)
-                    .background(Color(.secondarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                TrimHaptics.tap.impactOccurred()
-                preview.toggle()
-            } label: {
-                Image(systemName: preview.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.title3)
-                    .frame(width: 96, height: 48)
-                    .background(Color(.secondarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .buttonStyle(.plain)
-        }
-        .disabled(!preview.isReady)
-    }
-
-    @ViewBuilder
-    private var saveArea: some View {
-        VStack(spacing: 12) {
-            switch saveState {
-            case .downloading(let progress):
-                ProgressView(value: progress) {
-                    Text("Downloading original…")
-                        .font(.social(.footnote))
-                        .foregroundStyle(.secondary)
-                }
-            case .rendering(let progress):
-                ProgressView(value: progress) {
-                    Text("Trimming…")
-                        .font(.social(.footnote))
-                        .foregroundStyle(.secondary)
-                }
-            case .uploading(let progress):
-                ProgressView(value: progress) {
-                    Text("Uploading trimmed version…")
-                        .font(.social(.footnote))
-                        .foregroundStyle(.secondary)
-                }
-            case .failed(let message):
-                Text(message)
-                    .font(.social(.footnote))
-                    .foregroundStyle(Color.eveningsRed)
-            case .idle:
-                EmptyView()
-            }
-
-            Button(action: save) {
-                Text("Save Trimmed Version")
-                    .font(.social(.body, weight: .bold))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background(Color.eveningsRed)
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .disabled(!preview.isReady || !hasSelection || isSaving)
-            .opacity(!preview.isReady || !hasSelection || isSaving ? 0.4 : 1)
-        }
-    }
-
-    private func commitSelection() {
-        preview.setLoop(startFraction: trimStart, endFraction: trimEnd)
-    }
-
-    /// Copies the selection into a fresh file and uploads it as a new
-    /// track next to the original — nothing is overwritten.
-    private func save() {
-        guard let remote = track.audioURL else { return }
-        guard let token = model.credentials?.accessToken else {
-            saveState = .failed("Not signed in.")
-            return
-        }
-        preview.pause()
-        let startFraction = trimStart
-        let endFraction = trimEnd
-        saveState = .downloading(0)
-        Task {
-            // Keep the screen awake for the whole pipeline; a lock would
-            // suspend the app and kill the transfer.
-            UIApplication.shared.isIdleTimerDisabled = true
-            let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "trim-save")
-            defer {
-                UIApplication.shared.isIdleTimerDisabled = false
-                if backgroundTask != .invalid {
-                    UIApplication.shared.endBackgroundTask(backgroundTask)
-                }
-            }
-            var phase = "download the original"
-            do {
-                let source: URL
-                var ownsSource = false
-                if remote.isFileURL {
-                    source = remote
-                } else if let finished = preview.completedFileURL {
-                    source = finished
-                } else {
-                    source = try await TempoDownloader.download(from: remote) { progress in
-                        Task { @MainActor in
-                            if case .downloading = saveState {
-                                saveState = .downloading(progress)
-                            }
-                        }
-                    }
-                    ownsSource = true
-                }
-                defer {
-                    if ownsSource {
-                        try? FileManager.default.removeItem(at: source)
-                    }
-                }
-                phase = "trim the selection"
-                saveState = .rendering(0)
-                let rendered = try await TrimRenderer.render(
-                    source: source,
-                    startFraction: startFraction,
-                    endFraction: endFraction
-                ) { progress in
-                    Task { @MainActor in
-                        if case .rendering = saveState {
-                            saveState = .rendering(progress)
-                        }
-                    }
-                }
-                defer { try? FileManager.default.removeItem(at: rendered) }
-                // Moov-to-front like every other upload, so web playback
-                // starts immediately.
-                let streamable = (try? await Faststart.makeStreamable(rendered)) ?? rendered
-                defer {
-                    if streamable != rendered {
-                        try? FileManager.default.removeItem(at: streamable)
-                    }
-                }
-                phase = "upload the trimmed version"
-                saveState = .uploading(0)
-                let uploaded = try await api.uploadTrack(
-                    fileURL: streamable,
-                    filename: "trim-\(track.id).m4a",
-                    accessToken: token
-                ) { progress in
-                    Task { @MainActor in
-                        if case .uploading = saveState {
-                            saveState = .uploading(progress)
-                        }
-                    }
-                }
-                let baseTitle = track.title ?? "Untitled"
-                if track.owner != true {
-                    // Someone else's track: name it a remix and stamp
-                    // provenance in the description.
-                    try? await api.updateTrack(
-                        id: uploaded.id,
-                        title: "\(baseTitle) (remix)",
-                        description: Self.remixCredit(for: track),
-                        accessToken: token
-                    )
-                } else {
-                    try? await api.updateTrackTitle(
-                        id: uploaded.id,
-                        title: "\(baseTitle) (trimmed)",
-                        accessToken: token
-                    )
-                }
-                await model.loadLibrary()
-                TrimHaptics.confirm.notificationOccurred(.success)
-                dismiss()
-            } catch {
-                saveState = .failed("Couldn't \(phase): \(error.localizedDescription)")
-                TrimHaptics.confirm.notificationOccurred(.error)
-            }
-        }
-    }
-
-    private static func format(_ seconds: TimeInterval) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        let total = Int(seconds.rounded())
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        return h > 0
-            ? String(format: "%d:%02d:%02d", h, m, s)
-            : String(format: "%d:%02d", m, s)
-    }
-
-    /// Provenance line for a remix of another station's track.
-    static func remixCredit(for track: LibraryTrack) -> String {
-        let station = track.station?.name ?? "another station"
-        if let url = track.webURL {
-            return "Remixed from \(station) (\(url.absoluteString))"
-        }
-        return "Remixed from \(station)"
-    }
-}
-
 /// The Voice Memos-style trim strip: the whole track in a rounded housing,
 /// white in/out handles, and a yellow playhead riding the looping audition.
 /// One drag gesture serves all three — whichever target is nearest at
@@ -586,6 +203,11 @@ struct TrimStrip: View {
     let levels: [Float]?
     /// Smallest allowed selection, as a fraction.
     let minGap: Double
+    /// Finger touched down / is moving on the playhead — drives the
+    /// audible scrub (optional; without them the strip only seeks on
+    /// release).
+    var onScrubBegin: (() -> Void)?
+    var onScrubMove: ((Double) -> Void)?
     /// Playhead released after a scrub.
     let onScrub: (Double) -> Void
     /// A handle finished moving.
@@ -636,6 +258,9 @@ struct TrimStrip: View {
                             TrimHaptics.grab.impactOccurred(intensity: 0.7)
                             TrimHaptics.tick.prepare()
                             lastTickedStep = nil
+                            if active == .playhead {
+                                onScrubBegin?()
+                            }
                         }
                         let fraction = min(max(gesture.location.x / width, 0), 1)
                         switch active {
@@ -646,19 +271,24 @@ struct TrimStrip: View {
                             end = max(fraction, start + minGap)
                             tickIfNeeded(fraction: end)
                         case .playhead:
-                            scrubPreview = min(max(fraction, start), end)
+                            // The playhead can't leave the selection; the
+                            // audible scrub follows the clamped position.
+                            let clamped = min(max(fraction, start), end)
+                            scrubPreview = clamped
+                            onScrubMove?(clamped)
                         case nil:
                             break
                         }
                     }
-                    .onEnded { _ in
+                    .onEnded { gesture in
                         switch active {
                         case .start, .end:
                             onHandleMoved()
                         case .playhead:
-                            if let scrubPreview {
-                                onScrub(scrubPreview)
-                            }
+                            // Always paired with onScrubBegin, or the
+                            // preview would stay in its scrub state.
+                            let fraction = min(max(gesture.location.x / width, 0), 1)
+                            onScrub(scrubPreview ?? min(max(fraction, start), end))
                         case nil:
                             break
                         }
