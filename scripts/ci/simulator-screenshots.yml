@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       scenes:
-        description: "Scenes to capture (space-separated: login signup library explore account edit track stage live; edit-demo records a video)"
+        description: "Scenes to capture (space-separated: login signup library explore account edit track stage live; edit-demo and track-demo record videos)"
         default: "login signup library explore account edit track stage live"
       device:
         description: "Simulator device name"

@@ -13,7 +13,7 @@
 #   DEVICE         simulator name to prefer (default: iPhone 16 Pro; falls back
 #                  to the first available iPhone on the newest iOS runtime)
 #   SCENES         space-separated scenes (default: all stills; add edit-demo
-#                  for the editor recording)
+#                  or track-demo for the editor / detail-card recordings)
 #   APPEARANCE     light | dark | both (default: dark; the app forces its dark
 #                  palette via UIUserInterfaceStyle, so light looks the same)
 #   SETTLE         seconds to wait after launch before capturing (default: 4)

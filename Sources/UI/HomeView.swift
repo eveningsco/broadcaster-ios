@@ -58,6 +58,9 @@ struct HomeView: View {
             : nil
     @State private var heroExpanded = ScreenshotMode.scene?.opensDetails == true
     @Namespace private var heroNamespace
+    /// Screenshot mode's `track-demo` scene: where the ghost fingertip is
+    /// (see `runTrackDemo`). Nil otherwise.
+    @State private var demoFinger: DemoFinger?
 
     var body: some View {
         GeometryReader { geometry in
@@ -115,9 +118,18 @@ struct HomeView: View {
                     .transition(.identity)
                     .zIndex(1)
                 }
+
+                if let demoFinger {
+                    demoFingertip(demoFinger, width: width, safeArea: geometry.safeAreaInsets)
+                        .zIndex(2)
+                }
             }
             .ignoresSafeArea()
             .simultaneousGesture(swipeAway(width: width))
+            .task {
+                guard ScreenshotMode.scene?.animatesDetails == true else { return }
+                await runTrackDemo()
+            }
         }
         // The keyboard overlays the content: without this the geometry
         // shrinks when it appears and the whole page shifts up.
@@ -365,6 +377,79 @@ struct HomeView: View {
     /// A rightward drag on the library slides the card off to reveal the
     /// stage (and a leftward drag on the stage brings it back); any other
     /// horizontal drag slides between the card's Library and Explore tabs.
+    // MARK: - Screenshot demo
+
+    /// The `track-demo` screenshot scene: the library opens the detail card
+    /// by itself, for a simulator recording (scripts/simulator-screenshots.sh
+    /// records scenes ending in `-demo`). A ghost fingertip taps the first
+    /// track's cover and `detail` is set exactly as the row's button does,
+    /// so what's recorded is the real hero flight — then the backdrop is
+    /// tapped to dismiss, and the whole thing plays once more.
+    private enum DemoFinger: Equatable {
+        /// Over a track's cover, placed by the hero geometry of that cover.
+        case cover(heroID: String)
+        /// Over the frosted backdrop above the card.
+        case backdrop
+    }
+
+    @ViewBuilder
+    private func demoFingertip(_ finger: DemoFinger, width: CGFloat, safeArea: EdgeInsets) -> some View {
+        switch finger {
+        case .cover(let heroID):
+            // A non-source match borrows the cover's position, so the
+            // fingertip lands on the row without any frame plumbing.
+            DemoFingertip()
+                .matchedGeometryEffect(id: heroID, in: heroNamespace, isSource: false, properties: .position)
+        case .backdrop:
+            DemoFingertip()
+                .position(x: width / 2, y: safeArea.top + 64)
+        }
+    }
+
+    @MainActor
+    private func runTrackDemo() async {
+        guard let track = ScreenshotFixtures.library.first else { return }
+        let heroID = TrackDetailSelection.heroID(list: "library", track: track)
+
+        // Let the launch settle and the library read as the starting point.
+        await demoPause(1.6)
+
+        for _ in 0..<2 {
+            // Tap the cover.
+            demoTouch(.cover(heroID: heroID))
+            await demoPause(0.45)
+            demoTouch(nil)
+            await demoPause(0.12)
+            HomeHaptics.tap.impactOccurred()
+            detail = TrackDetailSelection(track: track, heroID: heroID)
+
+            // Hold the card open.
+            await demoPause(3.4)
+
+            // Tap the backdrop: same as TrackDetailOverlay.dismiss().
+            demoTouch(.backdrop)
+            await demoPause(0.4)
+            demoTouch(nil)
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) {
+                heroExpanded = false
+            }
+            await demoPause(0.45)
+            detail = nil
+
+            await demoPause(1.8)
+        }
+    }
+
+    private func demoTouch(_ finger: DemoFinger?) {
+        withAnimation(.easeOut(duration: 0.18)) {
+            demoFinger = finger
+        }
+    }
+
+    private func demoPause(_ seconds: TimeInterval) async {
+        try? await Task.sleep(for: .seconds(seconds))
+    }
+
     private func swipeAway(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 12)
             .onChanged { value in

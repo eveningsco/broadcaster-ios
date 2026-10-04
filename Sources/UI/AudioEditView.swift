@@ -466,18 +466,8 @@ struct AudioEditSheet: View {
             case play
         }
 
-        /// Translucent fingertip, roughly a thumb's contact patch.
-        struct Fingertip: View {
-            var body: some View {
-                Circle()
-                    .fill(Color.white.opacity(0.28))
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.7), lineWidth: 1.5))
-                    .frame(width: 46, height: 46)
-                    .shadow(color: .black.opacity(0.3), radius: 6)
-                    .transition(.opacity.combined(with: .scale(scale: 0.6)))
-                    .allowsHitTesting(false)
-            }
-        }
+        /// Shared with home's `track-demo` scene.
+        typealias Fingertip = DemoFingertip
     }
 
     @MainActor
