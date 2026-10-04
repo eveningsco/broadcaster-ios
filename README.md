@@ -10,21 +10,26 @@ automatic reconnection and background streaming.
 ```
 Sources/
   BroadcasterApp.swift      SwiftUI entry point
-  AppModel.swift            Session state: login, token refresh, Keychain persistence
+  AppModel.swift            Session state: login/sign-up, token refresh, Keychain persistence
   Config.swift              API + RTMP endpoints, bitrate
   API/
-    EveningsAPI.swift       /v1/devices/connect, /refresh, /v1/streams/:id/status
+    EveningsAPI.swift       /auth/signup, /v1/devices/connect, /refresh, library/explore
     Keychain.swift          Credentials storage (kSecClassGenericPassword)
   Broadcast/
     BroadcastController.swift  AVAudioEngine capture -> HaishinKit RTMP publish,
                                level metering, reconnect loop with backoff
   UI/
-    LoginView.swift
+    LoginView.swift         Sign-in; pushes SignUpView
+    SignUpView.swift        Account creation (same form + rules as the website's /signup)
+    AuthComponents.swift    Header, field style, primary button shared by the two
     BroadcastView.swift     Go Live / End, elapsed time, listener count, level meter
 ```
 
 - **Auth**: `POST /v1/devices/connect` with the phone's vendor ID; JWT (1h) +
-  refresh token (28d) + stream key stored in the Keychain. The connect/refresh
+  refresh token (28d) + stream key stored in the Keychain. Sign-up calls the
+  website's `POST /auth/signup` (email, stationName, password) and then
+  `/v1/devices/connect` with the same credentials, so a new account ends up
+  with the same device session a login produces. The connect/refresh
   responses include `channelId` and `station {id, slug, name}` (added to the API
   server alongside this app).
 - **Capture**: `AVAudioSession` (.playAndRecord, 48 kHz preferred) +
@@ -81,7 +86,7 @@ captures every screen to a PNG artifact.
 ```sh
 # From any machine with python3 and a GitHub token with `repo` scope:
 GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch
-# → screenshots/{login,library,explore,stage,live}.png
+# → screenshots/{login,signup,library,explore,stage,live}.png
 ```
 
 > **Setup (once):** GitHub only knows about a `workflow_dispatch`-only
@@ -109,8 +114,8 @@ workflow is manual-only rather than running on every push.
 The app supports a debug-only **screenshot mode** that makes this possible:
 launching with `-screenshot <scene>` renders that scene from fixture data
 (`Sources/Debug/ScreenshotMode.swift`) with no account, network, Keychain or
-microphone involved. Scenes: `login`, `library`, `explore`, `stage` (idle,
-"Go Live") and `live` (on air, timer, listeners). On a Mac:
+microphone involved. Scenes: `login`, `signup` (account creation), `library`,
+`explore`, `stage` (idle, "Go Live") and `live` (on air, timer). On a Mac:
 
 ```sh
 xcodegen generate
