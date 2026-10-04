@@ -137,13 +137,18 @@ struct TrackDetailOverlay: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Backdrop: dims the home layer, tap to dismiss. Fades with the
-            // chrome so the fly-back lands on an undimmed library.
-            Color.black
-                .opacity(expanded ? 0.55 * (1 - dragProgress) : 0)
-                .ignoresSafeArea()
-                .contentShape(Rectangle())
-                .onTapGesture { dismiss() }
+            // Backdrop: frosted blur over the home layer with a light dim
+            // (the app is dark-only, so the material tints dark), tap to
+            // dismiss. Fades with the chrome and thins as the card is
+            // dragged, so the fly-back lands on a crisp library.
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                Color.black.opacity(0.2)
+            }
+            .opacity(expanded ? 1 - dragProgress : 0)
+            .ignoresSafeArea()
+            .contentShape(Rectangle())
+            .onTapGesture { dismiss() }
 
             VStack(spacing: 12) {
                 card

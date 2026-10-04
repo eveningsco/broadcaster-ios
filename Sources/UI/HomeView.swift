@@ -96,7 +96,9 @@ struct HomeView: View {
                 libraryLayer(safeArea: geometry.safeAreaInsets, width: width)
                     .offset(x: offset)
                     // Recedes like a stacked sheet while the detail card
-                    // is up; the card's backdrop does the dimming.
+                    // is up and softens into the background; the card's
+                    // frosted backdrop does the rest of the blur and dim.
+                    .blur(radius: heroExpanded ? 6 : 0)
                     .scaleEffect(heroExpanded ? 0.94 : 1)
 
                 if let detail {
