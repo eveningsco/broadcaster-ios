@@ -96,6 +96,8 @@ struct AudioEditSheet: View {
                 Spacer(minLength: 0)
 
                 VStack(spacing: 10) {
+                    readouts
+
                     Group {
                         if isReady {
                             TrimStrip(
@@ -192,6 +194,30 @@ struct AudioEditSheet: View {
                 waveform.teardown()
             }
         }
+    }
+
+    /// In time, selected length, out time as one small line above the
+    /// strip — numbers only, no labels. Left/right placement already says
+    /// which is in and which is out; the middle one is the selection.
+    private var readouts: some View {
+        HStack(spacing: 0) {
+            readout(trimStart * duration)
+            Spacer(minLength: 8)
+            readout(selectedDuration)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            readout(trimEnd * duration)
+        }
+        .font(.social(.footnote))
+        .monospacedDigit()
+        .lineLimit(1)
+        .opacity(isReady ? 1 : 0)
+    }
+
+    private func readout(_ time: TimeInterval) -> some View {
+        // Never wrap: three h:mm:ss values on an hour-long set need the
+        // whole row, and a broken "16:05" is unreadable.
+        Text(Self.format(time)).fixedSize()
     }
 
     private var transport: some View {
