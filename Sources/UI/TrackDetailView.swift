@@ -4,37 +4,69 @@ import UIKit
 /// Soft tap for the transport controls, matching row selection.
 private enum TrackDetailHaptics {
     static let tap = UIImpactFeedbackGenerator(style: .light)
+    static let snap = UIImpactFeedbackGenerator(style: .medium)
 }
 
-/// The track detail sheet, opened by tapping a track's cover in the Library
-/// or Explore list: the title and byline, the cover at full width, the
-/// description, a waveform scrubber with an elapsed/total readout, and a
-/// transport (−15 s, play/pause, +15 s). Along the bottom sit a share pill
-/// (system share sheet with the track's evenings.fm page) and a loop toggle
-/// on the left, and the Edit pill on the right, which opens the combined
-/// audio editor (`AudioEditSheet`). Owners can also edit the title and
-/// description from the toolbar menu.
+/// Which track the detail card is showing, and which list cover it grew
+/// out of. The hero id names the list too (`library-cover-12`,
+/// `explore-cover-12`) so a track present in both lists has exactly one
+/// matched-geometry source.
+struct TrackDetailSelection: Equatable {
+    let track: LibraryTrack
+    let heroID: String
+
+    static func heroID(list: String, track: LibraryTrack) -> String {
+        "\(list)-cover-\(track.id)"
+    }
+}
+
+/// The track detail card, opened by tapping a track's cover in the Library
+/// or Explore list. Not a sheet: the 48pt artwork lifts out of its row and
+/// grows into the card's cover (`matchedGeometryEffect` on `HomeView`'s
+/// namespace) while the card's chrome fades in around it and the home
+/// layer dims and scales back behind.
+///
+/// The card floats inset from the screen edges, bottom-anchored: title and
+/// byline, the cover, the description, a waveform scrubber with
+/// elapsed/total, and a transport (−15 s, play/pause, +15 s). Two pills
+/// float under it: share + loop on the left, Edit on the right, which opens
+/// the combined audio editor (`AudioEditSheet`). Owners get Edit Details
+/// from a `…` in the card's corner.
+///
+/// Dismiss by dragging the card down (tracks the finger, rubber-banded
+/// upwards; release with momentum and the cover flies back into its row) or
+/// by tapping the backdrop.
 ///
 /// Playback goes through the shared `TrackPlayer`, so the home mini player,
-/// the lock screen and this sheet all show the same position; the sheet
-/// doesn't own any audio of its own.
-struct TrackDetailSheet: View {
+/// the lock screen and this card all show the same position.
+struct TrackDetailOverlay: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    /// Snapshot from the list; display reads the live copy (`current`) so a
-    /// title edit shows up without reopening.
-    let track: LibraryTrack
+    let selection: TrackDetailSelection
     @ObservedObject var player: TrackPlayer
+    let heroNamespace: Namespace.ID
+    /// True once the cover has flown out of its row. Owned by `HomeView` so
+    /// the row knows to hide its copy; flipped back on dismiss, and the row
+    /// becomes the matched-geometry source again.
+    @Binding var expanded: Bool
+    let safeArea: EdgeInsets
+    /// Called once the fly-back animation has finished; removes the overlay.
+    let onDismiss: () -> Void
 
     @StateObject private var waveform = WaveformLoader()
     @State private var isScrubbing = false
     @State private var editingAudio = false
     @State private var editingDetails = false
+    /// Vertical card displacement while dragging to dismiss.
+    @State private var dragOffset: CGFloat = 0
+    @State private var dismissing = false
+
+    private var track: LibraryTrack { selection.track }
 
     /// Screenshot mode's `track` scene: nothing is loaded (no network), so
     /// the scrubber, readout and play state pose from fixtures.
     private var isFixture: Bool { ScreenshotMode.isActive }
 
+    /// Display reads the live copy so a title edit shows up immediately.
     private var current: LibraryTrack {
         model.library.first { $0.id == track.id }
             ?? model.exploreTracks.first { $0.id == track.id }
@@ -93,71 +125,125 @@ struct TrackDetailSheet: View {
         return text.isEmpty ? nil : text
     }
 
+    /// The card's surface; the pills share it so they read as one set.
+    private let surface = Color(.tertiarySystemBackground)
+    private let cardCorner: CGFloat = 40
+
+    /// How far along the drag-to-dismiss is (0 at rest, 1 at the commit
+    /// distance); thins the backdrop as the card goes.
+    private var dragProgress: CGFloat {
+        min(max(dragOffset / 400, 0), 0.6)
+    }
+
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 28) {
-                    heading
+        ZStack(alignment: .bottom) {
+            // Backdrop: dims the home layer, tap to dismiss. Fades with the
+            // chrome so the fly-back lands on an undimmed library.
+            Color.black
+                .opacity(expanded ? 0.55 * (1 - dragProgress) : 0)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { dismiss() }
 
-                    TrackArtwork(url: coverURL, symbolFont: .system(size: 56))
-                        .aspectRatio(1, contentMode: .fit)
-                        .frame(maxWidth: 300)
-                        // Square with continuous rounded corners: the row's
-                        // 8pt-on-48pt proportion, scaled up (never a circle).
-                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-
-                    if let description {
-                        Text(description)
-                            .font(.social(.subheadline))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity)
-                    }
-
-                    scrubber
-
-                    transport
+            VStack(spacing: 12) {
+                card
+                pills
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, safeArea.top + 16)
+            .padding(.bottom, safeArea.bottom + 8)
+            .offset(y: dragOffset)
+            .gesture(dragToDismiss)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .onAppear {
+            // Screenshot mode arrives already expanded (posed). Otherwise
+            // wait one runloop so the cover has been laid out at the row's
+            // frame before it flies.
+            guard !expanded else { return }
+            TrackDetailHaptics.snap.prepare()
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.84)) {
+                    expanded = true
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 8)
-                .padding(.bottom, 24)
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                bottomBar
-            }
-            .navigationTitle("Track")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if current.owner == true {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Menu {
-                            Button {
-                                editingDetails = true
-                            } label: {
-                                Label("Edit Details", systemImage: "pencil")
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                        }
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .task {
-                guard !isFixture else { return }
-                waveform.load(key: key, url: current.audioURL, buckets: 48)
-            }
-            .sheet(isPresented: $editingAudio) {
-                AudioEditSheet(track: current)
-            }
-            .sheet(isPresented: $editingDetails) {
-                EditTrackSheet(track: current)
             }
         }
-        .presentationDragIndicator(.visible)
-        .modifier(OpaqueSheetBackground())
+        .task {
+            guard !isFixture else { return }
+            waveform.load(key: key, url: current.audioURL, buckets: 48)
+        }
+        .sheet(isPresented: $editingAudio) {
+            AudioEditSheet(track: current)
+        }
+        .sheet(isPresented: $editingDetails) {
+            EditTrackSheet(track: current)
+        }
+    }
+
+    // MARK: Card
+
+    private var card: some View {
+        VStack(spacing: 24) {
+            heading
+                .chrome(expanded)
+
+            cover
+
+            if let description {
+                Text(description)
+                    .font(.social(.subheadline))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity)
+                    .chrome(expanded)
+            }
+
+            scrubber
+                .chrome(expanded)
+
+            transport
+                .chrome(expanded)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 32)
+        .padding(.bottom, 24)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: cardCorner, style: .continuous)
+                .fill(surface)
+                .chrome(expanded)
+        )
+        .overlay(alignment: .topTrailing) {
+            if current.owner == true {
+                Menu {
+                    Button {
+                        editingDetails = true
+                    } label: {
+                        Label("Edit Details", systemImage: "pencil")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Color(.systemGray))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .padding(8)
+                .chrome(expanded)
+            }
+        }
+    }
+
+    /// The hero. Non-source while collapsed, so it sits on the row's 48pt
+    /// artwork; becomes the source as it expands and the row's copy follows
+    /// it (hidden). The corner radius tweens from the row's 8pt.
+    private var cover: some View {
+        TrackArtwork(url: coverURL, symbolFont: .system(size: 56))
+            .aspectRatio(1, contentMode: .fit)
+            .frame(maxWidth: 250)
+            .clipShape(RoundedRectangle(cornerRadius: expanded ? 28 : 8, style: .continuous))
+            .matchedGeometryEffect(id: selection.heroID, in: heroNamespace, isSource: expanded)
     }
 
     private var heading: some View {
@@ -165,13 +251,14 @@ struct TrackDetailSheet: View {
             Text(current.title ?? "Untitled")
                 .font(.custom("ETBembo-SemiBoldOSF", size: 30, relativeTo: .title))
                 .multilineTextAlignment(.center)
-                .lineLimit(3)
+                .lineLimit(2)
                 .minimumScaleFactor(0.8)
             if !byline.isEmpty {
                 Text(byline)
                     .font(.social(.body))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .lineLimit(1)
             }
             if !footnote.isEmpty {
                 Text(footnote)
@@ -180,10 +267,14 @@ struct TrackDetailSheet: View {
             }
         }
         .frame(maxWidth: .infinity)
+        // Keep the title clear of the owner menu in the corner.
+        .padding(.horizontal, 24)
     }
 
     /// The real waveform doubling as a scrubber (flat bars until the levels
-    /// have decoded), with elapsed / total underneath.
+    /// have decoded), with elapsed / total underneath. Its own 0-distance
+    /// drag wins over the card's dismiss drag, so scrubbing never moves the
+    /// card.
     private var scrubber: some View {
         VStack(spacing: 12) {
             PlayingWaveform(
@@ -258,15 +349,18 @@ struct TrackDetailSheet: View {
         .accessibilityLabel(label)
     }
 
-    /// Share + loop in one pill on the left, Edit on the right.
-    private var bottomBar: some View {
+    // MARK: Pills
+
+    /// Share + loop in one pill on the left, Edit on the right, floating
+    /// under the card on the same surface.
+    private var pills: some View {
         HStack(spacing: 12) {
             HStack(spacing: 0) {
                 if let url = current.webURL {
                     ShareLink(item: url, subject: Text(current.title ?? "Untitled")) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.title3)
-                            .frame(width: 56, height: 52)
+                            .frame(width: 60, height: 56)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -279,7 +373,7 @@ struct TrackDetailSheet: View {
                     Image(systemName: "repeat")
                         .font(.title3)
                         .foregroundStyle(player.isLoopingCurrent && isLoaded ? Color.eveningsRed : .primary)
-                        .frame(width: 56, height: 52)
+                        .frame(width: 60, height: 56)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -287,8 +381,8 @@ struct TrackDetailSheet: View {
                 .opacity(isLoaded ? 1 : 0.4)
                 .accessibilityLabel("Loop")
             }
-            .padding(.horizontal, 4)
-            .background(Capsule().fill(Color.primary.opacity(0.08)))
+            .padding(.horizontal, 8)
+            .background(Capsule().fill(surface))
 
             Spacer(minLength: 0)
 
@@ -299,9 +393,9 @@ struct TrackDetailSheet: View {
                 } label: {
                     Label("Edit", systemImage: "slider.horizontal.3")
                         .font(.social(.body, weight: .bold))
-                        .padding(.horizontal, 24)
-                        .frame(height: 52)
-                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                        .padding(.horizontal, 28)
+                        .frame(height: 56)
+                        .background(Capsule().fill(surface))
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -309,9 +403,60 @@ struct TrackDetailSheet: View {
                 .opacity(playbackBlocked ? 0.4 : 1)
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 12)
-        .padding(.bottom, 16)
-        .background(Color(.secondarySystemBackground))
+        .chrome(expanded)
+    }
+
+    // MARK: Dismissal
+
+    /// Drag the card down to dismiss: follows the finger 1:1 downwards,
+    /// quarter speed upwards; released with momentum past 140pt it goes.
+    private var dragToDismiss: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                guard !dismissing, !isScrubbing else { return }
+                let dy = value.translation.height
+                dragOffset = dy >= 0 ? dy : dy / 4
+            }
+            .onEnded { value in
+                guard !dismissing else { return }
+                if value.predictedEndTranslation.height > 140, dragOffset > 0 {
+                    // The cover flies back to its row from wherever the
+                    // card was let go; the chrome fades out in place.
+                    dismiss()
+                } else {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        dragOffset = 0
+                    }
+                }
+            }
+    }
+
+    private func dismiss() {
+        guard !dismissing else { return }
+        dismissing = true
+        TrackDetailHaptics.snap.impactOccurred(intensity: 0.7)
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) {
+            expanded = false
+        }
+        // No animation-completion hook before iOS 17: remove the overlay
+        // once the fly-back has settled.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            onDismiss()
+        }
+    }
+}
+
+private extension View {
+    /// Card chrome fades in a beat after the cover starts flying, and out
+    /// ahead of it on the way back, so the hero reads as the one solid
+    /// element throughout.
+    func chrome(_ expanded: Bool) -> some View {
+        opacity(expanded ? 1 : 0)
+            .animation(
+                expanded
+                    ? .easeOut(duration: 0.3).delay(0.08)
+                    : .easeIn(duration: 0.2),
+                value: expanded
+            )
     }
 }

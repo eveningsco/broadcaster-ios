@@ -24,9 +24,12 @@ struct LibraryListView: View {
     /// Screenshot mode's `edit` scenes open the editor on the first track.
     @State private var trackToEditAudio: LibraryTrack? =
         ScreenshotMode.scene?.opensEditor == true ? ScreenshotFixtures.library.first : nil
-    /// Screenshot mode's `track` scene opens the detail sheet on the first track.
-    @State private var trackToShow: LibraryTrack? =
-        ScreenshotMode.scene?.opensDetails == true ? ScreenshotFixtures.library.first : nil
+    /// The track detail card (owned by HomeView, which hosts the overlay
+    /// and the hero namespace); tapping a cover sets it.
+    @Binding var detail: TrackDetailSelection?
+    var heroNamespace: Namespace.ID
+    /// True while the detail card's cover has flown out of its row.
+    var heroExpanded = false
     @State private var draftPendingDelete: Draft?
 
     private var trimmedQuery: String {
@@ -148,6 +151,7 @@ struct LibraryListView: View {
                 }
 
                 ForEach(filteredLibrary) { track in
+                    let heroID = TrackDetailSelection.heroID(list: "library", track: track)
                     TrackRow(
                         track: track,
                         isPlaying: model.player.playingKey == TrackPlayer.key(for: track),
@@ -166,8 +170,11 @@ struct LibraryListView: View {
                         onShare: track.webURL != nil ? { copyLink(for: track) } : nil,
                         onOpenDetails: {
                             LibraryHaptics.select.impactOccurred()
-                            trackToShow = track
-                        }
+                            detail = TrackDetailSelection(track: track, heroID: heroID)
+                        },
+                        heroNamespace: heroNamespace,
+                        heroID: heroID,
+                        coverHidden: heroExpanded && detail?.heroID == heroID
                     )
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)
@@ -224,9 +231,6 @@ struct LibraryListView: View {
         .sheet(item: $trackToEditAudio) { track in
             AudioEditSheet(track: track)
         }
-        .sheet(item: $trackToShow) { track in
-            TrackDetailSheet(track: track, player: model.player)
-        }
     }
 
     // Wrapped in a scroll view so pull-to-refresh can retry a failed load.
@@ -272,9 +276,15 @@ struct TrackRow: View {
     var onSave: (() -> Void)?
     var onRemove: (() -> Void)?
     var onShare: (() -> Void)?
-    /// Tapping the cover opens the track detail sheet; the rest of the row
+    /// Tapping the cover opens the track detail card; the rest of the row
     /// still toggles playback (the list's tap gesture).
     var onOpenDetails: (() -> Void)?
+    /// Hero transition into the detail card: the cover is the matched
+    /// geometry source until the card has expanded, then hides and follows
+    /// the card's cover so there's one visible element throughout.
+    var heroNamespace: Namespace.ID?
+    var heroID: String?
+    var coverHidden = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -356,12 +366,20 @@ struct TrackRow: View {
         }
     }
 
+    @ViewBuilder
     private var artwork: some View {
         // No track cover -> the station's image (matches how the server
         // decorates broadcast recordings).
-        TrackArtwork(url: (track.image ?? track.station?.image).flatMap(URL.init(string:)))
+        let base = TrackArtwork(url: (track.image ?? track.station?.image).flatMap(URL.init(string:)))
             .frame(width: 48, height: 48)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+        if let heroNamespace, let heroID {
+            base
+                .matchedGeometryEffect(id: heroID, in: heroNamespace, isSource: !coverHidden)
+                .opacity(coverHidden ? 0 : 1)
+        } else {
+            base
+        }
     }
 
     private var subtitle: String {

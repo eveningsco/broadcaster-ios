@@ -14,8 +14,12 @@ struct ExploreListView: View {
     @EnvironmentObject private var model: AppModel
     /// True while the home swipe-away gesture is engaged.
     var scrollLocked = false
-    /// Track whose detail sheet is open (tapped cover).
-    @State private var trackToShow: LibraryTrack?
+    /// The track detail card (owned by HomeView, which hosts the overlay
+    /// and the hero namespace); tapping a cover sets it.
+    @Binding var detail: TrackDetailSelection?
+    var heroNamespace: Namespace.ID
+    /// True while the detail card's cover has flown out of its row.
+    var heroExpanded = false
 
     var body: some View {
         Group {
@@ -60,6 +64,7 @@ struct ExploreListView: View {
                 if !model.exploreTracks.isEmpty {
                     sectionHeader("Recent tracks")
                     ForEach(model.exploreTracks) { track in
+                        let heroID = TrackDetailSelection.heroID(list: "explore", track: track)
                         TrackRow(
                             track: track,
                             isPlaying: model.player.playingKey == TrackPlayer.key(for: track),
@@ -70,8 +75,11 @@ struct ExploreListView: View {
                             onShare: track.webURL != nil ? { copyLink(for: track) } : nil,
                             onOpenDetails: {
                                 ExploreHaptics.select.impactOccurred()
-                                trackToShow = track
-                            }
+                                detail = TrackDetailSelection(track: track, heroID: heroID)
+                            },
+                            heroNamespace: heroNamespace,
+                            heroID: heroID,
+                            coverHidden: heroExpanded && detail?.heroID == heroID
                         )
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)
@@ -97,9 +105,6 @@ struct ExploreListView: View {
         }
         .refreshable {
             await model.loadExplore()
-        }
-        .sheet(item: $trackToShow) { track in
-            TrackDetailSheet(track: track, player: model.player)
         }
     }
 

@@ -30,8 +30,8 @@ enum ScreenshotMode {
         /// motion. Scenes ending in `-demo` are recorded, not screenshotted,
         /// by scripts/simulator-screenshots.sh.
         case editDemo = "edit-demo"
-        /// The track detail sheet (cover, scrubber, transport, share/edit)
-        /// over the library, on its first track.
+        /// The track detail card (cover, scrubber, transport, share/edit)
+        /// floating over the library, on its first track.
         case track
         /// The stage revealed, idle (mic check, "Go Live").
         case stage
@@ -42,7 +42,7 @@ enum ScreenshotMode {
         var showsStage: Bool { self == .stage || self == .live }
         /// The library opens the audio editor on its first track.
         var opensEditor: Bool { self == .edit || self == .editDemo }
-        /// The library opens the detail sheet on its first track.
+        /// The library opens the detail card on its first track.
         var opensDetails: Bool { self == .track }
         /// The editor runs its scripted demo instead of posing from fixtures.
         var animatesEditor: Bool { self == .editDemo }

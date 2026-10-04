@@ -47,6 +47,17 @@ struct HomeView: View {
     }
     @State private var dragRole: DragRole = .stage
     @State private var tabDragTranslation: CGFloat = 0
+    /// The track detail card over the home layer (tapped cover in either
+    /// list), and the namespace its cover flies in. Screenshot mode's
+    /// `track` scene starts with it open, already expanded (posed).
+    @State private var detail: TrackDetailSelection? =
+        ScreenshotMode.scene?.opensDetails == true
+            ? ScreenshotFixtures.library.first.map {
+                TrackDetailSelection(track: $0, heroID: TrackDetailSelection.heroID(list: "library", track: $0))
+            }
+            : nil
+    @State private var heroExpanded = ScreenshotMode.scene?.opensDetails == true
+    @Namespace private var heroNamespace
 
     var body: some View {
         GeometryReader { geometry in
@@ -84,6 +95,24 @@ struct HomeView: View {
 
                 libraryLayer(safeArea: geometry.safeAreaInsets, width: width)
                     .offset(x: offset)
+                    // Recedes like a stacked sheet while the detail card
+                    // is up; the card's backdrop does the dimming.
+                    .scaleEffect(heroExpanded ? 0.94 : 1)
+
+                if let detail {
+                    TrackDetailOverlay(
+                        selection: detail,
+                        player: model.player,
+                        heroNamespace: heroNamespace,
+                        expanded: $heroExpanded,
+                        safeArea: geometry.safeAreaInsets,
+                        onDismiss: { self.detail = nil }
+                    )
+                    // The overlay animates itself in (hero + chrome fade)
+                    // and has already animated out by the time it's removed.
+                    .transition(.identity)
+                    .zIndex(1)
+                }
             }
             .ignoresSafeArea()
             .simultaneousGesture(swipeAway(width: width))
@@ -164,11 +193,19 @@ struct HomeView: View {
                 uploads: model.uploads,
                 scrollLocked: listsLocked,
                 searchQuery: searchActive ? searchQuery : "",
-                listAtTop: $listAtTop
+                listAtTop: $listAtTop,
+                detail: $detail,
+                heroNamespace: heroNamespace,
+                heroExpanded: heroExpanded
             )
             .frame(width: width)
-            ExploreListView(scrollLocked: listsLocked)
-                .frame(width: width)
+            ExploreListView(
+                scrollLocked: listsLocked,
+                detail: $detail,
+                heroNamespace: heroNamespace,
+                heroExpanded: heroExpanded
+            )
+            .frame(width: width)
         }
         .offset(x: tabOffset)
         .frame(width: width, alignment: .leading)
@@ -329,7 +366,9 @@ struct HomeView: View {
     private func swipeAway(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 12)
             .onChanged { value in
-                if isScrubbing {
+                // Parked while the detail card is up (it owns its own
+                // drag-to-dismiss), and while a waveform is being scrubbed.
+                if isScrubbing || detail != nil {
                     dragTranslation = 0
                     tabDragTranslation = 0
                     return

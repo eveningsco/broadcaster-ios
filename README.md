@@ -119,7 +119,7 @@ launching with `-screenshot <scene>` renders that scene from fixture data
 microphone involved. Scenes: `login`, `signup` (account creation), `library`,
 `explore`, `account` (the station/sign-out sheet from the header gear),
 `edit` (the trim + tempo audio editor over the library), `track` (the track
-detail sheet — cover, scrubber, share and Edit — over the library), `stage`
+detail card — cover, scrubber, share and Edit — floating over the library), `stage`
 (idle, "Go Live") and `live` (on air, timer). Scenes ending in `-demo`
 animate instead of posing — `edit-demo` has the editor trim, audition and
 re-speed a track by itself with a ghost fingertip — and the capture script
