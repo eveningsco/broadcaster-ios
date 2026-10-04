@@ -30,9 +30,9 @@ struct AccountSheet: View {
 
                 if let slug = station.slug {
                     Text("evenings.fm/\(slug)")
-                        .font(.social(.footnote))
+                        .font(.social(.body))
                         .foregroundStyle(.secondary)
-                        .padding(.top, 4)
+                        .padding(.top, 6)
                 }
 
                 Spacer(minLength: 0)
@@ -91,15 +91,23 @@ private struct OpaqueSheetBackground: ViewModifier {
     }
 }
 
-/// Circular station photo; while loading, or when the station has none,
-/// a soft disc with the Evenings starburst stands in (same treatment as
-/// TrackArtwork's placeholder, in the round).
+/// Station photo: a square with continuous rounded corners, the same shape
+/// the website and the library's track artwork use (profile photos on
+/// Evenings are square, not circular). While loading, or when the station
+/// has none, a soft rounded square with the Evenings starburst stands in.
 struct StationPhoto: View {
     let url: URL?
+    /// 24pt on the sheet's 132pt photo keeps the 8pt-on-44pt proportion of
+    /// TrackArtwork.
+    var cornerRadius: CGFloat = 24
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
 
     var body: some View {
         ZStack {
-            Circle()
+            shape
                 .fill(.quaternary)
             if let url {
                 AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.2))) { phase in
@@ -121,7 +129,7 @@ struct StationPhoto: View {
                 placeholder
             }
         }
-        .clipShape(Circle())
+        .clipShape(shape)
         .accessibilityLabel("Station photo")
     }
 
