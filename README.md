@@ -91,6 +91,16 @@ GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch --appearance both
 > `.github/workflows/simulator-screenshots.yml` on `main` once; after that
 > `--ref` can point at any branch that has the file.
 
+The workflow file is a thin wrapper; the actual steps (select Xcode, XcodeGen,
+`xcodebuild`, capture) live in `scripts/ci/simulator-screenshots-job.sh` so
+they can be changed without touching `.github/workflows/` (the forum agent's
+token lacks the `workflow` scope). `scripts/ci/simulator-screenshots.yml` is
+the source copy of the workflow — `cp` it over `.github/workflows/` when it
+changes. **Xcode 26 is required**: HaishinKit 2.2+ uses
+`kVTCompressionPropertyKey_VariableBitRate` (iOS 26 SDK), so the job script
+`xcode-select`s the newest `/Applications/Xcode_26*.app` — GitHub's `macos-15`
+image defaults to Xcode 16.4, which fails to compile HaishinKit.
+
 Or trigger it by hand (Actions → Simulator Screenshots → Run workflow) and
 download the `simulator-screenshots` artifact. A cold run takes ~8–12 minutes
 (SPM resolve + build dominate); macOS minutes bill at 10x Linux, so the

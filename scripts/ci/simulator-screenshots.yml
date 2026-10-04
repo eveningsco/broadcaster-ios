@@ -1,0 +1,66 @@
+# SOURCE OF TRUTH for .github/workflows/simulator-screenshots.yml.
+#
+# The forum agent's GitHub token lacks the `workflow` scope, so it cannot push
+# anything under .github/workflows/. It edits this copy instead; a human syncs
+# it when it changes (should be rare — all the logic lives in
+# scripts/ci/simulator-screenshots-job.sh, which anyone can edit):
+#
+#   cp scripts/ci/simulator-screenshots.yml .github/workflows/
+#   git commit -am "Sync the Simulator Screenshots workflow" && git push
+#
+# Builds the app for the iOS Simulator on a macOS runner and captures each
+# screenshot-mode scene (Sources/Debug/ScreenshotMode.swift) as a PNG
+# artifact. Manual only: macOS minutes bill at 10x Linux on private repos.
+#
+#   scripts/ci-screenshots.py            # trigger, wait, download (needs GH_TOKEN)
+#   gh workflow run simulator-screenshots.yml --ref <branch>
+name: Simulator Screenshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenes:
+        description: "Scenes to capture (space-separated: login library explore stage live)"
+        default: "login library explore stage live"
+      device:
+        description: "Simulator device name"
+        default: "iPhone 16 Pro"
+      appearance:
+        description: "System appearance"
+        type: choice
+        options: [light, dark, both]
+        default: light
+
+jobs:
+  screenshots:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: build/DerivedData/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('project.yml') }}
+
+      - name: Build and capture
+        env:
+          DEVICE: ${{ inputs.device }}
+          SCENES: ${{ inputs.scenes }}
+          APPEARANCE: ${{ inputs.appearance }}
+          OUT: screenshots
+        run: scripts/ci/simulator-screenshots-job.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simulator-screenshots
+          path: screenshots/*.png
+          if-no-files-found: error
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log

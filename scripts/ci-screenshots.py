@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -36,6 +37,22 @@ def token():
     sys.exit("set GH_TOKEN (repo scope)")
 
 
+class _DropAuthOnCrossHostRedirect(urllib.request.HTTPRedirectHandler):
+    """Artifact downloads 302 from api.github.com to Azure blob storage, which
+    rejects requests that still carry the GitHub bearer token (401
+    InvalidAuthenticationInfo). urllib forwards headers on redirect, so strip
+    Authorization when the host changes."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
+            new.remove_header("Authorization")
+        return new
+
+
+_opener = urllib.request.build_opener(_DropAuthOnCrossHostRedirect)
+
+
 def request(path, method="GET", body=None, raw=False):
     url = path if path.startswith("http") else f"{API}/repos/{REPO}{path}"
     data = json.dumps(body).encode() if body is not None else None
@@ -46,7 +63,7 @@ def request(path, method="GET", body=None, raw=False):
         "User-Agent": "broadcaster-ios-ci-screenshots",
     })
     try:
-        with urllib.request.urlopen(req) as resp:
+        with _opener.open(req) as resp:
             payload = resp.read()
     except urllib.error.HTTPError as e:
         sys.exit(f"{method} {url} -> {e.code}: {e.read().decode(errors='replace')[:400]}")
