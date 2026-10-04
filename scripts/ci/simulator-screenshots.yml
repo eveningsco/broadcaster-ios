@@ -1,0 +1,89 @@
+# Builds the app for the iOS Simulator on a macOS runner and captures each
+# screenshot-mode scene (Sources/Debug/ScreenshotMode.swift) as a PNG
+# artifact. Manual only: macOS minutes bill at 10x Linux on private repos.
+#
+# INSTALL: this file belongs at .github/workflows/simulator-screenshots.yml.
+# It is parked here because the forum agent's GitHub token lacks the
+# `workflow` scope, which GitHub requires to push anything under
+# .github/workflows/. Someone with normal push rights:
+#
+#   git mv scripts/ci/simulator-screenshots.yml .github/workflows/
+#   git commit -m "Install the Simulator Screenshots workflow" && git push
+#
+#   scripts/ci-screenshots.py            # trigger, wait, download (needs GH_TOKEN)
+#   gh workflow run simulator-screenshots.yml --ref <branch>
+name: Simulator Screenshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenes:
+        description: "Scenes to capture (space-separated: login library explore stage live)"
+        default: "login library explore stage live"
+      device:
+        description: "Simulator device name"
+        default: "iPhone 16 Pro"
+      appearance:
+        description: "System appearance"
+        type: choice
+        options: [light, dark, both]
+        default: light
+
+jobs:
+  screenshots:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: build/DerivedData/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('project.yml') }}
+
+      - name: Build for simulator
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild build \
+            -project EveningsBroadcaster.xcodeproj \
+            -scheme EveningsBroadcaster \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee build/xcodebuild.log | grep -E 'error:|warning: .*(deprecated|unused)|\*\* BUILD' || true
+          grep -q '\*\* BUILD SUCCEEDED \*\*' build/xcodebuild.log
+
+      - name: Capture screenshots
+        env:
+          DEVICE: ${{ inputs.device }}
+          SCENES: ${{ inputs.scenes }}
+          APPEARANCE: ${{ inputs.appearance }}
+        run: |
+          scripts/simulator-screenshots.sh \
+            build/DerivedData/Build/Products/Debug-iphonesimulator/Evenings.app \
+            screenshots
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simulator-screenshots
+          path: screenshots/*.png
+          if-no-files-found: error
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log

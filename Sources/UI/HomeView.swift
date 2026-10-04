@@ -15,7 +15,8 @@ private enum HomeHaptics {
 /// back left (or ending a broadcast) returns to the library.
 struct HomeView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var libraryShown = true
+    // Screenshot mode starts with the stage revealed for the stage scenes.
+    @State private var libraryShown = !(ScreenshotMode.scene?.showsStage ?? false)
     @State private var dragTranslation: CGFloat = 0
     /// True while a finger is scrubbing the mini player's waveform, so the
     /// swipe-away gesture stays out of the way.
@@ -34,7 +35,7 @@ struct HomeView: View {
         case library
         case explore
     }
-    @State private var cardTab: CardTab = .library
+    @State private var cardTab: CardTab = ScreenshotMode.scene == .explore ? .explore : .library
     /// What a horizontal drag is moving: the whole card off the stage, or
     /// the tab strip inside the card (library ↔ explore). Locked when the
     /// drag engages so a mid-gesture direction reversal doesn't switch jobs.
