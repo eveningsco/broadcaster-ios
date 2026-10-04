@@ -399,7 +399,7 @@ struct HomeView: View {
             // A non-source match borrows the cover's position, so the
             // fingertip lands on the row without any frame plumbing.
             DemoFingertip()
-                .matchedGeometryEffect(id: heroID, in: heroNamespace, isSource: false, properties: .position)
+                .matchedGeometryEffect(id: heroID, in: heroNamespace, properties: .position, isSource: false)
         case .backdrop:
             DemoFingertip()
                 .position(x: width / 2, y: safeArea.top + 64)
