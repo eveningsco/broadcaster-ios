@@ -7,6 +7,7 @@ and download the PNGs — from any machine with python3 and a GitHub token
                                            [--device "iPhone 16 Pro"]
                                            [--appearance light|dark|both]
                                            [--out screenshots]
+    GH_TOKEN=... scripts/ci-screenshots.py --run 37172713333   # attach to an existing run
 
 The token needs `repo` scope (or Actions read/write on a fine-grained token).
 Defaults to the current git branch. Exits non-zero if the run fails; the
@@ -89,36 +90,16 @@ def main():
     p.add_argument("--appearance", default="light", choices=["light", "dark", "both"])
     p.add_argument("--out", default="screenshots")
     p.add_argument("--timeout", type=int, default=45 * 60, help="seconds to wait for the run")
+    p.add_argument("--run", type=int, metavar="RUN_ID",
+                   help="don't dispatch; wait for this existing run (e.g. one started from the Actions tab)")
     args = p.parse_args()
 
-    started = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=5)
-    try:
-        request(f"/actions/workflows/{WORKFLOW}/dispatches", "POST", {
-            "ref": args.ref,
-            "inputs": {"scenes": args.scenes, "device": args.device, "appearance": args.appearance},
-        })
-    except SystemExit as e:
-        if "-> 404" in str(e):
-            sys.exit(f"{e}\n\nGitHub returned 404 for the dispatch. A dispatch-only workflow is only "
-                     f"registered once its file exists on the repo's default branch; "
-                     f"land .github/workflows/{WORKFLOW} on main (one commit, just that file), "
-                     f"then re-run with --ref {args.ref}.")
-        raise
-    print(f"dispatched {WORKFLOW} on {args.ref}; waiting for the run to appear…")
-
-    run = None
     deadline = time.time() + args.timeout
-    while run is None and time.time() < deadline:
-        time.sleep(5)
-        runs = request(f"/actions/workflows/{WORKFLOW}/runs?event=workflow_dispatch"
-                       f"&branch={args.ref}&per_page=5")["workflow_runs"]
-        fresh = [r for r in runs
-                 if dt.datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")) >= started]
-        if fresh:
-            run = fresh[0]
-    if run is None:
-        sys.exit("run never appeared")
-    print(f"run {run['id']}: {run['html_url']}")
+    if args.run:
+        run = request(f"/actions/runs/{args.run}")
+        print(f"attached to run {run['id']} ({run['head_branch']} @ {run['head_sha'][:7]}): {run['html_url']}")
+    else:
+        run = dispatch_and_find_run(args, deadline)
 
     last = None
     while time.time() < deadline:
@@ -145,6 +126,37 @@ def main():
 
     if run["conclusion"] != "success":
         sys.exit(f"run finished with conclusion={run['conclusion']}")
+
+
+def dispatch_and_find_run(args, deadline):
+    started = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=5)
+    try:
+        request(f"/actions/workflows/{WORKFLOW}/dispatches", "POST", {
+            "ref": args.ref,
+            "inputs": {"scenes": args.scenes, "device": args.device, "appearance": args.appearance},
+        })
+    except SystemExit as e:
+        if "-> 404" in str(e):
+            sys.exit(f"{e}\n\nGitHub returned 404 for the dispatch. A dispatch-only workflow is only "
+                     f"registered once its file exists on the repo's default branch; "
+                     f"land .github/workflows/{WORKFLOW} on main (one commit, just that file), "
+                     f"then re-run with --ref {args.ref}.")
+        raise
+    print(f"dispatched {WORKFLOW} on {args.ref}; waiting for the run to appear…")
+
+    run = None
+    while run is None and time.time() < deadline:
+        time.sleep(5)
+        runs = request(f"/actions/workflows/{WORKFLOW}/runs?event=workflow_dispatch"
+                       f"&branch={args.ref}&per_page=5")["workflow_runs"]
+        fresh = [r for r in runs
+                 if dt.datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")) >= started]
+        if fresh:
+            run = fresh[0]
+    if run is None:
+        sys.exit("run never appeared")
+    print(f"run {run['id']}: {run['html_url']}")
+    return run
 
 
 if __name__ == "__main__":

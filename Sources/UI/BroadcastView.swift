@@ -26,7 +26,9 @@ struct BroadcastView: View {
     /// Slides the library card back over the stage (the button mirrors the
     /// leftward swipe).
     var onBack: (() -> Void)? = nil
-    @State private var mode: StageMode = .record
+    // Screenshot mode's `live` scene opens on the Live side so the picker,
+    // badge and "End" button agree; every other launch starts Offline.
+    @State private var mode: StageMode = ScreenshotMode.scene == .live ? .live : .record
     @State private var listeners: Int?
     @State private var now = Date()
 
