@@ -133,7 +133,9 @@ scripts/simulator-screenshots.sh \
 ```
 
 The mode is compiled out of Release builds. `docs/screenshots/` holds
-reference captures and `docs/videos/` reference recordings.
+reference captures and `docs/videos/` reference recordings
+(`edit-demo.{mp4,gif}`: the combined audio editor in motion, CI run
+37180113601, 2026-10-04).
 
 ## Not yet implemented (post-MVP)
 
