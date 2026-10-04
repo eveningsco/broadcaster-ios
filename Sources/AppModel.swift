@@ -67,7 +67,7 @@ final class AppModel: ObservableObject {
             broadcast.setScreenshotState(.idle, levelDb: -27)
         case .live:
             broadcast.setScreenshotState(.live(since: ScreenshotFixtures.liveSince), levelDb: -14)
-        case .login, .signup, .library, .explore, .edit, .editDemo:
+        case .login, .signup, .library, .explore, .account, .edit, .editDemo:
             break
         }
     }
@@ -84,6 +84,26 @@ final class AppModel: ObservableObject {
     }
 
     var isLoggedIn: Bool { credentials != nil }
+
+    /// What the account sheet shows for the signed-in station. The deployed
+    /// connect/refresh responses carry no `station` yet (see ConnectResponse),
+    /// so gaps are filled from the station attached to the user's own library
+    /// tracks, which the library endpoint has always included.
+    struct AccountStation {
+        var name: String?
+        var slug: String?
+        var imageURL: URL?
+    }
+
+    var accountStation: AccountStation {
+        let session = credentials?.station
+        let owned = library.first { $0.owner == true }?.station
+        return AccountStation(
+            name: session?.name ?? owned?.name,
+            slug: session?.slug ?? owned?.slug,
+            imageURL: (session?.image ?? owned?.image).flatMap(URL.init(string:))
+        )
+    }
 
     func login(email: String, password: String) async {
         isLoggingIn = true

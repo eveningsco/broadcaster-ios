@@ -22,6 +22,7 @@ Sources/
     LoginView.swift         Sign-in; pushes SignUpView
     SignUpView.swift        Account creation (same form + rules as the website's /signup)
     AuthComponents.swift    Header, field style, primary button shared by the two
+    AccountView.swift       Account sheet (station photo, name, sign out) from the header gear
     BroadcastView.swift     Go Live / End, elapsed time, listener count, level meter
 ```
 
@@ -30,8 +31,9 @@ Sources/
   website's `POST /auth/signup` (email, stationName, password) and then
   `/v1/devices/connect` with the same credentials, so a new account ends up
   with the same device session a login produces. The connect/refresh
-  responses include `channelId` and `station {id, slug, name}` (added to the API
-  server alongside this app).
+  responses include `channelId` and `station {id, slug, name, image}` (added to
+  the API server alongside this app; decoded optionally, and the account sheet
+  falls back to the station on your own library tracks until it is deployed).
 - **Capture**: `AVAudioSession` (.playAndRecord, 48 kHz preferred) +
   `AVAudioEngine` input tap. External interfaces show up as the active input
   route automatically. The same tap feeds the RMS level meter.
@@ -86,7 +88,7 @@ captures every screen to a PNG artifact.
 ```sh
 # From any machine with python3 and a GitHub token with `repo` scope:
 GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch
-# → screenshots/{login,signup,library,explore,edit,stage,live}.png
+# → screenshots/{login,signup,library,explore,account,edit,stage,live}.png
 ```
 
 > **Setup (once):** GitHub only knows about a `workflow_dispatch`-only
@@ -115,7 +117,8 @@ The app supports a debug-only **screenshot mode** that makes this possible:
 launching with `-screenshot <scene>` renders that scene from fixture data
 (`Sources/Debug/ScreenshotMode.swift`) with no account, network, Keychain or
 microphone involved. Scenes: `login`, `signup` (account creation), `library`,
-`explore`, `edit` (the trim + tempo audio editor over the library), `stage`
+`explore`, `account` (the station/sign-out sheet from the header gear),
+`edit` (the trim + tempo audio editor over the library), `stage`
 (idle, "Go Live") and `live` (on air, timer). Scenes ending in `-demo`
 animate instead of posing — `edit-demo` has the editor trim, audition and
 re-speed a track by itself with a ghost fingertip — and the capture script

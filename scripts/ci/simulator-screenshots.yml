@@ -21,8 +21,8 @@ on:
   workflow_dispatch:
     inputs:
       scenes:
-        description: "Scenes to capture (space-separated: login signup library explore edit stage live; edit-demo records a video)"
-        default: "login signup library explore edit stage live"
+        description: "Scenes to capture (space-separated: login signup library explore account edit stage live; edit-demo records a video)"
+        default: "login signup library explore account edit stage live"
       device:
         description: "Simulator device name"
         default: "iPhone 16 Pro"

@@ -4,6 +4,11 @@ struct Station: Codable, Equatable {
     let id: Int
     let slug: String
     let name: String
+    /// Absolute URL of the station photo; nil until the station has one
+    /// (and absent from API responses that predate it).
+    var image: String?
+
+    var imageURL: URL? { image.flatMap(URL.init(string:)) }
 }
 
 // channelId/station only exist once the updated API server is deployed; decode
