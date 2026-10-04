@@ -23,6 +23,11 @@ enum ScreenshotMode {
         case explore
         /// The audio editor (trim + tempo) sheet over the library.
         case edit
+        /// The audio editor driving itself through a trim, an audition and a
+        /// speed change (~15 s) so a simulator *recording* shows it in
+        /// motion. Scenes ending in `-demo` are recorded, not screenshotted,
+        /// by scripts/simulator-screenshots.sh.
+        case editDemo = "edit-demo"
         /// The stage revealed, idle (mic check, "Go Live").
         case stage
         /// The stage on air: LIVE badge and elapsed timer.
@@ -30,6 +35,10 @@ enum ScreenshotMode {
 
         var isSignedIn: Bool { self != .login && self != .signup }
         var showsStage: Bool { self == .stage || self == .live }
+        /// The library opens the audio editor on its first track.
+        var opensEditor: Bool { self == .edit || self == .editDemo }
+        /// The editor runs its scripted demo instead of posing from fixtures.
+        var animatesEditor: Bool { self == .editDemo }
     }
 
     /// The requested scene, parsed once at launch. `-screenshot <scene>` lands

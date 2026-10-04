@@ -29,6 +29,9 @@ struct AudioEditSheet: View {
     @State private var trimStart: Double = 0
     @State private var trimEnd: Double = 1
     @State private var saveState: SaveState = .idle
+    /// Screenshot mode's `edit-demo` scene: the page drives itself (see
+    /// `runDemo`). Inert otherwise.
+    @State private var demo = Demo.Values()
 
     private let api = EveningsAPI()
 
@@ -51,11 +54,16 @@ struct AudioEditSheet: View {
     /// loads (no network), so readiness, duration, levels and the playhead
     /// come from `ScreenshotFixtures` instead.
     private var isFixture: Bool { ScreenshotMode.isActive }
+    private var isDemo: Bool { ScreenshotMode.scene?.animatesEditor == true }
     private var isReady: Bool { preview.isReady || isFixture }
     private var duration: TimeInterval {
         isFixture ? TimeInterval(track.duration ?? 0) : preview.duration
     }
-    private var progress: Double { isFixture ? ScreenshotFixtures.editPlayhead : preview.progress }
+    private var progress: Double {
+        if isDemo { return demo.progress }
+        return isFixture ? ScreenshotFixtures.editPlayhead : preview.progress
+    }
+    private var isPlaying: Bool { isDemo ? demo.isPlaying : preview.isPlaying }
     private var levels: [Float]? { waveform.levels ?? (isFixture ? ScreenshotFixtures.editWaveform : nil) }
 
     private var percent: Int {
@@ -105,6 +113,14 @@ struct AudioEditSheet: View {
                     }
                 }
                 .frame(height: 132)
+                .overlay {
+                    if case .strip(let fraction) = demo.finger {
+                        GeometryReader { geometry in
+                            Demo.Fingertip()
+                                .position(x: fraction * geometry.size.width, y: geometry.size.height / 2)
+                        }
+                    }
+                }
 
                 readouts
 
@@ -112,6 +128,14 @@ struct AudioEditSheet: View {
 
                 VStack(spacing: 10) {
                     SpeedWheel(value: $preview.rate)
+                        .overlay {
+                            if case .wheel(let offset) = demo.finger {
+                                GeometryReader { geometry in
+                                    Demo.Fingertip()
+                                        .position(x: geometry.size.width / 2 + offset, y: geometry.size.height / 2)
+                                }
+                            }
+                        }
                     // Varispeed changes the runtime; show where the
                     // selection lands. Blank (not absent) at 100% so the
                     // layout doesn't jump when the wheel leaves the detent.
@@ -138,6 +162,10 @@ struct AudioEditSheet: View {
             }
             .interactiveDismissDisabled(isSaving)
             .task {
+                if isDemo {
+                    await runDemo()
+                    return
+                }
                 if isFixture {
                     trimStart = ScreenshotFixtures.editSelection.lowerBound
                     trimEnd = ScreenshotFixtures.editSelection.upperBound
@@ -261,13 +289,18 @@ struct AudioEditSheet: View {
                 AudioEditHaptics.tap.impactOccurred()
                 preview.toggle()
             } label: {
-                Image(systemName: preview.isPlaying ? "pause.fill" : "play.fill")
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                     .font(.title3)
                     .frame(width: 96, height: 48)
                     .background(Color(.secondarySystemBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .buttonStyle(.plain)
+            .overlay {
+                if demo.finger == .play {
+                    Demo.Fingertip()
+                }
+            }
         }
         .disabled(!isReady)
     }
@@ -457,6 +490,148 @@ struct AudioEditSheet: View {
                 saveState = .failed("Couldn't \(phase): \(error.localizedDescription)")
                 AudioEditHaptics.confirm.notificationOccurred(.error)
             }
+        }
+    }
+
+    // MARK: - Screenshot demo
+
+    /// The `edit-demo` screenshot scene: ~15 s of the page using itself, for
+    /// a simulator recording (`scripts/simulator-screenshots.sh` records
+    /// scenes ending in `-demo`). A ghost fingertip marks each "touch". The
+    /// values are tweened by hand at ~60 Hz rather than with `withAnimation`
+    /// because the wheel is a `Canvas` and wouldn't interpolate. The
+    /// audition is mimed: a 2 h fixture track's playhead would not visibly
+    /// move at real speed, so it crosses the selection in a few seconds.
+    private enum Demo {
+        struct Values {
+            var progress: Double = 0
+            var isPlaying = false
+            var finger: Finger?
+        }
+
+        enum Finger: Equatable {
+            /// Over the trim strip, at a fraction of its width.
+            case strip(Double)
+            /// Over the speed wheel, offset in points from its centre.
+            case wheel(CGFloat)
+            case play
+        }
+
+        /// Translucent fingertip, roughly a thumb's contact patch.
+        struct Fingertip: View {
+            var body: some View {
+                Circle()
+                    .fill(Color.white.opacity(0.28))
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.7), lineWidth: 1.5))
+                    .frame(width: 46, height: 46)
+                    .shadow(color: .black.opacity(0.3), radius: 6)
+                    .transition(.opacity.combined(with: .scale(scale: 0.6)))
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    @MainActor
+    private func runDemo() async {
+        let target = ScreenshotFixtures.editSelection
+        let targetRate = ScreenshotFixtures.editRate
+        trimStart = 0
+        trimEnd = 1
+        preview.rate = 1
+        demo.progress = 0
+
+        // Let the sheet finish presenting.
+        await pause(1.4)
+
+        // Drag the in handle.
+        touch(.strip(0))
+        await pause(0.35)
+        await tween(1.2) { t in
+            trimStart = target.lowerBound * t
+            demo.finger = .strip(trimStart)
+        }
+        await pause(0.25)
+        touch(nil)
+        await pause(0.5)
+
+        // Drag the out handle.
+        touch(.strip(1))
+        await pause(0.35)
+        await tween(1.2) { t in
+            trimEnd = 1 - (1 - target.upperBound) * t
+            demo.finger = .strip(trimEnd)
+        }
+        await pause(0.25)
+        touch(nil)
+        await pause(0.6)
+
+        // Play: the playhead loops the selection until the end.
+        touch(.play)
+        await pause(0.3)
+        demo.isPlaying = true
+        demo.progress = trimStart
+        let playhead = Task { @MainActor in
+            let secondsPerPass = 4.5
+            var last = Date()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(33))
+                let now = Date()
+                let span = max(trimEnd - trimStart, 0.001)
+                var next = demo.progress + now.timeIntervalSince(last) / secondsPerPass * span
+                if next > trimEnd { next = trimStart + (next - trimEnd) }
+                demo.progress = next
+                last = now
+            }
+        }
+        defer { playhead.cancel() }
+        await pause(0.25)
+        touch(nil)
+        await pause(1.6)
+
+        // Spin the wheel down to the fixture rate. Dragging the strip right
+        // lowers the value (SpeedWheel.drag), 7 pt per percent.
+        touch(.wheel(0))
+        await pause(0.35)
+        await tween(1.5) { t in
+            preview.rate = 1 - (1 - targetRate) * t
+            demo.finger = .wheel(CGFloat((1 - preview.rate) * 100 * 7))
+        }
+        preview.rate = targetRate
+        await pause(0.3)
+        touch(nil)
+
+        // Hold on the finished edit, still looping, then rest on pause.
+        await pause(3.5)
+        touch(.play)
+        await pause(0.3)
+        demo.isPlaying = false
+        playhead.cancel()
+        await pause(0.25)
+        touch(nil)
+    }
+
+    private func touch(_ finger: Demo.Finger?) {
+        withAnimation(.easeOut(duration: 0.18)) {
+            demo.finger = finger
+        }
+    }
+
+    private func pause(_ seconds: TimeInterval) async {
+        try? await Task.sleep(for: .seconds(seconds))
+    }
+
+    /// Calls `apply` with an eased 0→1 progress at roughly 60 Hz.
+    @MainActor
+    private func tween(_ duration: TimeInterval, _ apply: (Double) -> Void) async {
+        let started = Date()
+        while true {
+            let linear = min(Date().timeIntervalSince(started) / duration, 1)
+            let eased = linear < 0.5
+                ? 2 * linear * linear
+                : 1 - pow(-2 * linear + 2, 2) / 2
+            apply(eased)
+            if linear >= 1 { return }
+            try? await Task.sleep(for: .milliseconds(16))
         }
     }
 

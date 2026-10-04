@@ -116,7 +116,12 @@ launching with `-screenshot <scene>` renders that scene from fixture data
 (`Sources/Debug/ScreenshotMode.swift`) with no account, network, Keychain or
 microphone involved. Scenes: `login`, `signup` (account creation), `library`,
 `explore`, `edit` (the trim + tempo audio editor over the library), `stage`
-(idle, "Go Live") and `live` (on air, timer). On a Mac:
+(idle, "Go Live") and `live` (on air, timer). Scenes ending in `-demo`
+animate instead of posing — `edit-demo` has the editor trim, audition and
+re-speed a track by itself with a ghost fingertip — and the capture script
+*records* them (`simctl io recordVideo`, ~18 s) into `<scene>.mov` plus an
+animated `<scene>.png`, so `--scenes edit-demo` yields a short video of the
+editor in motion. On a Mac:
 
 ```sh
 xcodegen generate
@@ -128,7 +133,7 @@ scripts/simulator-screenshots.sh \
 ```
 
 The mode is compiled out of Release builds. `docs/screenshots/` holds
-reference captures.
+reference captures and `docs/videos/` reference recordings.
 
 ## Not yet implemented (post-MVP)
 

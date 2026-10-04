@@ -10,7 +10,8 @@
 #
 # Builds the app for the iOS Simulator on a macOS runner and captures each
 # screenshot-mode scene (Sources/Debug/ScreenshotMode.swift) as a PNG
-# artifact. Manual only: macOS minutes bill at 10x Linux on private repos.
+# artifact; `-demo` scenes are recorded (animated PNG + .mov). Manual only:
+# macOS minutes bill at 10x Linux on private repos.
 #
 #   scripts/ci-screenshots.py            # trigger, wait, download (needs GH_TOKEN)
 #   gh workflow run simulator-screenshots.yml --ref <branch>
@@ -20,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       scenes:
-        description: "Scenes to capture (space-separated: login signup library explore edit stage live)"
+        description: "Scenes to capture (space-separated: login signup library explore edit stage live; edit-demo records a video)"
         default: "login signup library explore edit stage live"
       device:
         description: "Simulator device name"
@@ -55,7 +56,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: simulator-screenshots
-          path: screenshots/*.png
+          path: |
+            screenshots/*.png
+            screenshots/*.mov
           if-no-files-found: error
 
       - name: Upload build log

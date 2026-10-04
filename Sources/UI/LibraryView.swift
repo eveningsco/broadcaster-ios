@@ -21,9 +21,9 @@ struct LibraryListView: View {
     @Binding var listAtTop: Bool
     @State private var trackPendingDelete: LibraryTrack?
     @State private var trackToEdit: LibraryTrack?
-    /// Screenshot mode's `edit` scene opens the editor on the first track.
+    /// Screenshot mode's `edit` scenes open the editor on the first track.
     @State private var trackToEditAudio: LibraryTrack? =
-        ScreenshotMode.scene == .edit ? ScreenshotFixtures.library.first : nil
+        ScreenshotMode.scene?.opensEditor == true ? ScreenshotFixtures.library.first : nil
     @State private var draftPendingDelete: Draft?
 
     private var trimmedQuery: String {
