@@ -67,7 +67,7 @@ final class AppModel: ObservableObject {
             broadcast.setScreenshotState(.idle, levelDb: -27)
         case .live:
             broadcast.setScreenshotState(.live(since: ScreenshotFixtures.liveSince), levelDb: -14)
-        case .login, .signup, .library, .explore, .account, .edit, .editDemo, .track:
+        case .login, .signup, .library, .explore, .account, .edit, .editDemo, .track, .trackDemo:
             break
         }
     }
