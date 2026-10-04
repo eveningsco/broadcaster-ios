@@ -174,6 +174,15 @@ final class TrackPlayer: ObservableObject {
         seek(toFraction: seconds / duration)
     }
 
+    /// Nudges playback by `seconds` (negative = back), clamped to the track.
+    /// Works from the published progress rather than the player clock so
+    /// two quick taps during a settling seek add up instead of racing it.
+    func skip(by seconds: Double) {
+        guard let duration = player?.currentItem?.duration.seconds,
+              duration.isFinite, duration > 0 else { return }
+        seek(toSeconds: min(max(progress * duration + seconds, 0), duration))
+    }
+
     private func updateProgress(currentTime: Double) {
         // Stale ticks while a seek is settling would drag the needle back.
         guard pendingSeeks == 0 else { return }

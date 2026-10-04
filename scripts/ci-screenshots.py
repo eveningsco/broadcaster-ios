@@ -9,6 +9,7 @@ and download the PNGs — from any machine with python3 and a GitHub token
                                            [--out screenshots]
     GH_TOKEN=... scripts/ci-screenshots.py --run 37172713333   # attach to an existing run
     GH_TOKEN=... scripts/ci-screenshots.py --scenes edit-demo    # ~18 s recording as animated PNG
+    GH_TOKEN=... scripts/ci-screenshots.py --scenes track-demo   # cover tap → detail card hero transition
 
 The token needs `repo` scope (or Actions read/write on a fine-grained token).
 Defaults to the current git branch. Exits non-zero if the run fails; the
@@ -86,7 +87,7 @@ def current_branch():
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ref", default=current_branch())
-    p.add_argument("--scenes", default="login signup library explore account edit stage live",
+    p.add_argument("--scenes", default="login signup library explore account edit track stage live",
                    help="space-separated scenes; ones ending in -demo are recorded (animated PNG)")
     p.add_argument("--device", default="iPhone 16 Pro")
     p.add_argument("--appearance", default="dark", choices=["light", "dark", "both"])

@@ -24,6 +24,11 @@ struct LibraryListView: View {
     /// Screenshot mode's `edit` scenes open the editor on the first track.
     @State private var trackToEditAudio: LibraryTrack? =
         ScreenshotMode.scene?.opensEditor == true ? ScreenshotFixtures.library.first : nil
+    /// The track detail card (owned by HomeView, which hosts the overlay);
+    /// tapping a cover sets it.
+    @Binding var detail: TrackDetailSelection?
+    /// True while the detail card's cover has flown out of its row.
+    var heroExpanded = false
     @State private var draftPendingDelete: Draft?
 
     private var trimmedQuery: String {
@@ -145,6 +150,7 @@ struct LibraryListView: View {
                 }
 
                 ForEach(filteredLibrary) { track in
+                    let heroID = TrackDetailSelection.heroID(list: "library", track: track)
                     TrackRow(
                         track: track,
                         isPlaying: model.player.playingKey == TrackPlayer.key(for: track),
@@ -160,7 +166,13 @@ struct LibraryListView: View {
                         } : nil,
                         onDelete: track.owner == true ? { trackPendingDelete = track } : nil,
                         onRemove: track.owner != true ? { remove(track) } : nil,
-                        onShare: track.webURL != nil ? { copyLink(for: track) } : nil
+                        onShare: track.webURL != nil ? { copyLink(for: track) } : nil,
+                        onOpenDetails: { coverFrame in
+                            LibraryHaptics.select.impactOccurred()
+                            detail = TrackDetailSelection(track: track, heroID: heroID, sourceFrame: coverFrame)
+                        },
+                        heroID: heroID,
+                        coverHidden: heroExpanded && detail?.heroID == heroID
                     )
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)
@@ -262,10 +274,29 @@ struct TrackRow: View {
     var onSave: (() -> Void)?
     var onRemove: (() -> Void)?
     var onShare: (() -> Void)?
+    /// Tapping the cover opens the track detail card; the rest of the row
+    /// still toggles playback (the list's tap gesture).
+    /// Passed the cover's frame in `HeroSpace`, where the card's cover
+    /// flies out from.
+    var onOpenDetails: ((CGRect) -> Void)?
+    /// Hero transition into the detail card: the cover publishes its frame
+    /// under `heroID` (`CoverFramesKey`) and hides while the card's copy is
+    /// up, so there's one visible element throughout.
+    var heroID: String?
+    var coverHidden = false
+    @State private var coverFrame: CGRect = .zero
 
     var body: some View {
         HStack(spacing: 12) {
-            artwork
+            if let onOpenDetails {
+                Button(action: { onOpenDetails(coverFrame) }) {
+                    artwork
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Track details")
+            } else {
+                artwork
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.title ?? "Untitled")
                     .font(.social(.body, weight: .medium))
@@ -335,12 +366,28 @@ struct TrackRow: View {
         }
     }
 
+    @ViewBuilder
     private var artwork: some View {
         // No track cover -> the station's image (matches how the server
         // decorates broadcast recordings).
-        TrackArtwork(url: (track.image ?? track.station?.image).flatMap(URL.init(string:)))
+        let base = TrackArtwork(url: (track.image ?? track.station?.image).flatMap(URL.init(string:)))
             .frame(width: 48, height: 48)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+        if let heroID {
+            base
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: CoverFramesKey.self,
+                        value: [heroID: geometry.frame(in: .named(HeroSpace.name))]
+                    )
+                })
+                .onPreferenceChange(CoverFramesKey.self) { frames in
+                    if let frame = frames[heroID] { coverFrame = frame }
+                }
+                .opacity(coverHidden ? 0 : 1)
+        } else {
+            base
+        }
     }
 
     private var subtitle: String {
@@ -495,6 +542,9 @@ struct DraftRow: View {
 /// success, static waveform for tracks with no cover (or a failed load).
 struct TrackArtwork: View {
     let url: URL?
+    /// Size of the waveform glyph in the no-cover state; the detail sheet's
+    /// large cover passes a bigger one so it doesn't float as a speck.
+    var symbolFont: Font = .body
     @State private var pulsing = false
 
     var body: some View {
@@ -532,6 +582,7 @@ struct TrackArtwork: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(.quaternary)
             Image(systemName: "waveform")
+                .font(symbolFont)
                 .foregroundStyle(.secondary)
         }
     }

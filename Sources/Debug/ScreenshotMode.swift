@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Debug-only "screenshot mode". Launch the app with `-screenshot <scene>`
 /// (or the env var `EVENINGS_SCREENSHOT=<scene>`) and it renders that scene
@@ -30,6 +31,15 @@ enum ScreenshotMode {
         /// motion. Scenes ending in `-demo` are recorded, not screenshotted,
         /// by scripts/simulator-screenshots.sh.
         case editDemo = "edit-demo"
+        /// The track detail card (cover, scrubber, transport, share/edit)
+        /// floating over the library, on its first track.
+        case track
+        /// The library opening the detail card by itself: a ghost fingertip
+        /// taps the first track's cover, the cover flies into the card over
+        /// the frosted library, the card is dismissed, and it plays once
+        /// more (~13 s) — the hero transition on record. Recorded, not
+        /// screenshotted (see `editDemo`).
+        case trackDemo = "track-demo"
         /// The stage revealed, idle (mic check, "Go Live").
         case stage
         /// The stage on air: LIVE badge and elapsed timer.
@@ -39,8 +49,12 @@ enum ScreenshotMode {
         var showsStage: Bool { self == .stage || self == .live }
         /// The library opens the audio editor on its first track.
         var opensEditor: Bool { self == .edit || self == .editDemo }
+        /// The library opens the detail card on its first track.
+        var opensDetails: Bool { self == .track }
         /// The editor runs its scripted demo instead of posing from fixtures.
         var animatesEditor: Bool { self == .editDemo }
+        /// Home scripts the cover tap → detail card transition itself.
+        var animatesDetails: Bool { self == .trackDemo }
     }
 
     /// The requested scene, parsed once at launch. `-screenshot <scene>` lands
@@ -56,6 +70,23 @@ enum ScreenshotMode {
     }()
 
     static var isActive: Bool { scene != nil }
+    /// The `track-demo` recording: the detail card's motion is tuned for
+    /// the CI simulator's slow renderer (see TrackDetailMotion.timeScale).
+    static var recordsDetails: Bool { scene?.animatesDetails == true }
+}
+
+/// Translucent fingertip, roughly a thumb's contact patch, marking each
+/// "touch" in the `-demo` scenes (the editor's and home's scripted demos).
+struct DemoFingertip: View {
+    var body: some View {
+        Circle()
+            .fill(Color.white.opacity(0.28))
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.7), lineWidth: 1.5))
+            .frame(width: 46, height: 46)
+            .shadow(color: .black.opacity(0.3), radius: 6)
+            .transition(.opacity.combined(with: .scale(scale: 0.6)))
+            .allowsHitTesting(false)
+    }
 }
 
 /// Fixture data for screenshot mode. Fixed dates and no artwork URLs so the

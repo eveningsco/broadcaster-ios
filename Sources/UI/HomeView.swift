@@ -47,6 +47,24 @@ struct HomeView: View {
     }
     @State private var dragRole: DragRole = .stage
     @State private var tabDragTranslation: CGFloat = 0
+    /// The track detail card over the home layer (tapped cover in either
+    /// list). Screenshot mode's `track` scene starts with it open, already
+    /// expanded (posed).
+    @State private var detail: TrackDetailSelection? =
+        ScreenshotMode.scene?.opensDetails == true
+            ? ScreenshotFixtures.library.first.map {
+                TrackDetailSelection(track: $0, heroID: TrackDetailSelection.heroID(list: "library", track: $0))
+            }
+            : nil
+    @State private var heroExpanded = ScreenshotMode.scene?.opensDetails == true
+    /// Screenshot mode's `track-demo` scene: where the ghost fingertip is
+    /// and the list covers' frames it taps (see `runTrackDemo`). Idle
+    /// otherwise.
+    @State private var demoFinger: DemoFinger?
+    @State private var demoCoverFrames: [String: CGRect] = [:]
+    /// `track-demo`: the detail card is pre-rendered invisibly until the
+    /// demo starts (see the warm-up in `body`).
+    @State private var demoWarming = ScreenshotMode.scene?.animatesDetails == true
 
     var body: some View {
         GeometryReader { geometry in
@@ -84,9 +102,79 @@ struct HomeView: View {
 
                 libraryLayer(safeArea: geometry.safeAreaInsets, width: width)
                     .offset(x: offset)
+                    // Recedes like a stacked sheet while the detail card
+                    // is up and softens into the background; the card's
+                    // frosted backdrop does the rest of the blur and dim.
+                    // The blur radius steps rather than tweens: re-blurring
+                    // the whole layer every frame is costly and the frost
+                    // above hides the step.
+                    //
+                    // Screenshot mode: the CI simulator software-renders a
+                    // material over a moving layer so slowly that the
+                    // recording would skip the whole flight. Posed stills
+                    // step everything; the recorded `track-demo` tweens the
+                    // recession (its backdrop keeps the frost off until the
+                    // layer is still) and skips the layer blur, which the
+                    // frost hides anyway.
+                    .blur(radius: heroExpanded && !ScreenshotMode.recordsDetails ? 6 : 0)
+                    .animation(nil, value: heroExpanded)
+                    .scaleEffect(heroExpanded ? 0.94 : 1)
+                    .animation(
+                        ScreenshotMode.isActive && !ScreenshotMode.recordsDetails
+                            ? nil
+                            : (heroExpanded ? TrackDetailMotion.open : TrackDetailMotion.close),
+                        value: heroExpanded
+                    )
+
+                if let detail {
+                    TrackDetailOverlay(
+                        selection: detail,
+                        player: model.player,
+                        expanded: $heroExpanded,
+                        safeArea: geometry.safeAreaInsets,
+                        onDismiss: { self.detail = nil }
+                    )
+                    // The overlay animates itself in (hero + chrome fade)
+                    // and has already animated out by the time it's removed.
+                    .transition(.identity)
+                    .zIndex(1)
+                }
+
+                if demoWarming, let track = ScreenshotFixtures.library.first {
+                    // `track-demo` only: the card mounted invisibly for the
+                    // first moments so its material, fonts and symbols are
+                    // rendered once before the recorded open. Without it
+                    // the first open stalls the CI simulator's software
+                    // renderer and the flight is skipped.
+                    TrackDetailOverlay(
+                        selection: TrackDetailSelection(track: track, heroID: "warm-up"),
+                        player: model.player,
+                        expanded: .constant(true),
+                        safeArea: geometry.safeAreaInsets,
+                        onDismiss: {}
+                    )
+                    .opacity(0.01)
+                    .allowsHitTesting(false)
+                    .zIndex(1)
+                }
+
+                if let demoFinger {
+                    demoFingertip(demoFinger, width: width, safeArea: geometry.safeAreaInsets)
+                        .zIndex(2)
+                }
             }
             .ignoresSafeArea()
+            // The space the detail card's cover flies in (row frame ↔ card).
+            .coordinateSpace(name: HeroSpace.name)
             .simultaneousGesture(swipeAway(width: width))
+            .onPreferenceChange(CoverFramesKey.self) { frames in
+                guard ScreenshotMode.scene?.animatesDetails == true else { return }
+                demoCoverFrames = frames
+            }
+            .task {
+                guard ScreenshotMode.scene?.animatesDetails == true else { return }
+                await runTrackDemo()
+            }
         }
         // The keyboard overlays the content: without this the geometry
         // shrinks when it appears and the whole page shifts up.
@@ -164,11 +252,17 @@ struct HomeView: View {
                 uploads: model.uploads,
                 scrollLocked: listsLocked,
                 searchQuery: searchActive ? searchQuery : "",
-                listAtTop: $listAtTop
+                listAtTop: $listAtTop,
+                detail: $detail,
+                heroExpanded: heroExpanded
             )
             .frame(width: width)
-            ExploreListView(scrollLocked: listsLocked)
-                .frame(width: width)
+            ExploreListView(
+                scrollLocked: listsLocked,
+                detail: $detail,
+                heroExpanded: heroExpanded
+            )
+            .frame(width: width)
         }
         .offset(x: tabOffset)
         .frame(width: width, alignment: .leading)
@@ -326,10 +420,89 @@ struct HomeView: View {
     /// A rightward drag on the library slides the card off to reveal the
     /// stage (and a leftward drag on the stage brings it back); any other
     /// horizontal drag slides between the card's Library and Explore tabs.
+    // MARK: - Screenshot demo
+
+    /// The `track-demo` screenshot scene: the library opens the detail card
+    /// by itself, for a simulator recording (scripts/simulator-screenshots.sh
+    /// records scenes ending in `-demo`). A ghost fingertip taps the first
+    /// track's cover and `detail` is set exactly as the row's button does,
+    /// so what's recorded is the real hero flight — then the backdrop is
+    /// tapped to dismiss, and the whole thing plays once more.
+    private enum DemoFinger: Equatable {
+        /// Over a track's cover, placed by the hero geometry of that cover.
+        case cover(heroID: String)
+        /// Over the frosted backdrop above the card.
+        case backdrop
+    }
+
+    @ViewBuilder
+    private func demoFingertip(_ finger: DemoFinger, width: CGFloat, safeArea: EdgeInsets) -> some View {
+        switch finger {
+        case .cover(let heroID):
+            let frame = demoCoverFrames[heroID] ?? CGRect(x: 44, y: safeArea.top + 120, width: 48, height: 48)
+            DemoFingertip()
+                .position(x: frame.midX, y: frame.midY)
+        case .backdrop:
+            DemoFingertip()
+                .position(x: width / 2, y: safeArea.top + 64)
+        }
+    }
+
+    @MainActor
+    private func runTrackDemo() async {
+        guard let track = ScreenshotFixtures.library.first else { return }
+        let heroID = TrackDetailSelection.heroID(list: "library", track: track)
+
+        // Let the launch settle (the invisible card warms the renderer
+        // meanwhile) and the library read as the starting point.
+        await demoPause(0.9)
+        demoWarming = false
+        await demoPause(0.7)
+
+        for _ in 0..<2 {
+            // Tap the cover.
+            demoTouch(.cover(heroID: heroID))
+            await demoPause(0.45)
+            demoTouch(nil)
+            await demoPause(0.12)
+            HomeHaptics.tap.impactOccurred()
+            detail = TrackDetailSelection(
+                track: track, heroID: heroID, sourceFrame: demoCoverFrames[heroID] ?? .zero
+            )
+
+            // Hold the card open (the frost arrives once the hero settles).
+            await demoPause(3.0)
+
+            // Tap the backdrop: same as TrackDetailOverlay.dismiss().
+            demoTouch(.backdrop)
+            await demoPause(0.4)
+            demoTouch(nil)
+            withAnimation(TrackDetailMotion.close) {
+                heroExpanded = false
+            }
+            await demoPause(TrackDetailMotion.settle)
+            detail = nil
+
+            await demoPause(1.4)
+        }
+    }
+
+    private func demoTouch(_ finger: DemoFinger?) {
+        withAnimation(.easeOut(duration: 0.18)) {
+            demoFinger = finger
+        }
+    }
+
+    private func demoPause(_ seconds: TimeInterval) async {
+        try? await Task.sleep(for: .seconds(seconds))
+    }
+
     private func swipeAway(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 12)
             .onChanged { value in
-                if isScrubbing {
+                // Parked while the detail card is up (it owns its own
+                // drag-to-dismiss), and while a waveform is being scrubbed.
+                if isScrubbing || detail != nil {
                     dragTranslation = 0
                     tabDragTranslation = 0
                     return

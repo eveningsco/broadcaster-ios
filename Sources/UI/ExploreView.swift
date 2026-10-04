@@ -14,6 +14,11 @@ struct ExploreListView: View {
     @EnvironmentObject private var model: AppModel
     /// True while the home swipe-away gesture is engaged.
     var scrollLocked = false
+    /// The track detail card (owned by HomeView, which hosts the overlay);
+    /// tapping a cover sets it.
+    @Binding var detail: TrackDetailSelection?
+    /// True while the detail card's cover has flown out of its row.
+    var heroExpanded = false
 
     var body: some View {
         Group {
@@ -58,6 +63,7 @@ struct ExploreListView: View {
                 if !model.exploreTracks.isEmpty {
                     sectionHeader("Recent tracks")
                     ForEach(model.exploreTracks) { track in
+                        let heroID = TrackDetailSelection.heroID(list: "explore", track: track)
                         TrackRow(
                             track: track,
                             isPlaying: model.player.playingKey == TrackPlayer.key(for: track),
@@ -65,7 +71,13 @@ struct ExploreListView: View {
                             showsTags: true,
                             showsListens: false,
                             onSave: canSave(track) ? { save(track) } : nil,
-                            onShare: track.webURL != nil ? { copyLink(for: track) } : nil
+                            onShare: track.webURL != nil ? { copyLink(for: track) } : nil,
+                            onOpenDetails: { coverFrame in
+                                ExploreHaptics.select.impactOccurred()
+                                detail = TrackDetailSelection(track: track, heroID: heroID, sourceFrame: coverFrame)
+                            },
+                            heroID: heroID,
+                            coverHidden: heroExpanded && detail?.heroID == heroID
                         )
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)

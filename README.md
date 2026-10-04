@@ -118,11 +118,15 @@ launching with `-screenshot <scene>` renders that scene from fixture data
 (`Sources/Debug/ScreenshotMode.swift`) with no account, network, Keychain or
 microphone involved. Scenes: `login`, `signup` (account creation), `library`,
 `explore`, `account` (the station/sign-out sheet from the header gear),
-`edit` (the trim + tempo audio editor over the library), `stage`
+`edit` (the trim + tempo audio editor over the library), `track` (the track
+detail card — cover, scrubber, share and Edit — floating over the library), `stage`
 (idle, "Go Live") and `live` (on air, timer). Scenes ending in `-demo`
 animate instead of posing — `edit-demo` has the editor trim, audition and
-re-speed a track by itself with a ghost fingertip — and the capture script
-*records* them (`simctl io recordVideo`, ~18 s) into `<scene>.mov` plus an
+re-speed a track by itself with a ghost fingertip; `track-demo` taps a
+track's cover so it flies out of the row into the detail card over the
+frosted library, dismisses it and repeats (at half speed, so the ~15 fps
+CI simulator catches the motion) — and the capture script
+*records* them (`simctl io recordVideo`, ~24 s) into `<scene>.mov` plus an
 animated `<scene>.png`, so `--scenes edit-demo` yields a short video of the
 editor in motion. On a Mac:
 
