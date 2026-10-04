@@ -80,8 +80,8 @@ captures every screen to a PNG artifact.
 
 ```sh
 # From any machine with python3 and a GitHub token with `repo` scope:
-GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch --appearance both
-# → screenshots/{login,library,explore,stage,live}-{light,dark}.png
+GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch
+# → screenshots/{login,library,explore,stage,live}.png
 ```
 
 > **Setup (once):** GitHub only knows about a `workflow_dispatch`-only

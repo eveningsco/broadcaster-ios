@@ -8,7 +8,8 @@
 #   DEVICE      simulator name to prefer (default: iPhone 16 Pro; falls back to
 #               the first available iPhone on the newest iOS runtime)
 #   SCENES      space-separated scenes (default: all)
-#   APPEARANCE  light | dark | both (default: light)
+#   APPEARANCE  light | dark | both (default: dark; the app forces its dark
+#               palette via UIUserInterfaceStyle, so light looks the same)
 #   SETTLE      seconds to wait after launch before capturing (default: 4)
 #
 # Needs Xcode (xcrun simctl) and python3; runs on a Mac or a macOS CI runner.
@@ -18,7 +19,7 @@ APP=${1:?usage: $0 <Evenings.app> <output dir>}
 OUT=${2:?usage: $0 <Evenings.app> <output dir>}
 DEVICE=${DEVICE:-iPhone 16 Pro}
 SCENES=${SCENES:-login library explore stage live}
-APPEARANCE=${APPEARANCE:-light}
+APPEARANCE=${APPEARANCE:-dark}
 SETTLE=${SETTLE:-4}
 BUNDLE_ID=co.evenings.EveningsBroadcaster
 

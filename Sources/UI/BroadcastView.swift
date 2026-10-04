@@ -29,7 +29,6 @@ struct BroadcastView: View {
     // Screenshot mode's `live` scene opens on the Live side so the picker,
     // badge and "End" button agree; every other launch starts Offline.
     @State private var mode: StageMode = ScreenshotMode.scene == .live ? .live : .record
-    @State private var listeners: Int?
     @State private var now = Date()
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -78,10 +77,6 @@ struct BroadcastView: View {
                 VStack(spacing: 4) {
                     Text(elapsed(since: since))
                         .font(.system(.largeTitle, design: .monospaced).weight(.medium))
-                    if let listeners {
-                        Label("\(listeners) listening", systemImage: "ear")
-                            .foregroundStyle(.secondary)
-                    }
                     if let warning = broadcast.audioWarning {
                         Text(warning)
                             .font(.social(.footnote))
@@ -144,29 +139,12 @@ struct BroadcastView: View {
             }
         }
         .padding(24)
-        // The stage is always dark (see HomeView's backdrop), so resolve every
-        // semantic color — .primary/.secondary text, the segmented control,
-        // the capsule fills — against dark, whatever the system appearance.
-        // Without this, light mode draws black text on the near-black stage.
-        .environment(\.colorScheme, .dark)
         // Everything on the stage fades in as it's revealed (the backdrop
         // stays put; only the content fades). Tracks the drag 1:1; the
         // release spring animates the rest via the enclosing transaction.
         .opacity(revealProgress)
         .onReceive(ticker) { date in
             now = date
-        }
-        .task(id: broadcast.state.isActive) {
-            guard broadcast.state.isActive else {
-                listeners = nil
-                return
-            }
-            while !Task.isCancelled {
-                if let status = await model.fetchStatus() {
-                    listeners = status.listeners
-                }
-                try? await Task.sleep(nanoseconds: UInt64(Config.statusPollInterval * 1_000_000_000))
-            }
         }
     }
 

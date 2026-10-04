@@ -21,7 +21,7 @@ enum ScreenshotMode {
         case explore
         /// The stage revealed, idle (mic check, "Go Live").
         case stage
-        /// The stage on air: LIVE badge, elapsed timer, listener count.
+        /// The stage on air: LIVE badge and elapsed timer.
         case live
 
         var isSignedIn: Bool { self != .login }
@@ -56,8 +56,6 @@ enum ScreenshotFixtures {
         channelId: "screenshot",
         station: station
     )
-
-    static let status = StreamStatus(online: true, listeners: 12)
 
     /// Reads 02:13 on the stage timer at capture time.
     static let liveSince = Date().addingTimeInterval(-130)

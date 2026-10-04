@@ -87,7 +87,7 @@ def main():
     p.add_argument("--ref", default=current_branch())
     p.add_argument("--scenes", default="login library explore stage live")
     p.add_argument("--device", default="iPhone 16 Pro")
-    p.add_argument("--appearance", default="light", choices=["light", "dark", "both"])
+    p.add_argument("--appearance", default="dark", choices=["light", "dark", "both"])
     p.add_argument("--out", default="screenshots")
     p.add_argument("--timeout", type=int, default=45 * 60, help="seconds to wait for the run")
     p.add_argument("--run", type=int, metavar="RUN_ID",

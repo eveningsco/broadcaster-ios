@@ -306,10 +306,4 @@ final class AppModel: ObservableObject {
             // Network hiccup: keep the session; the stream key rarely rotates.
         }
     }
-
-    func fetchStatus() async -> StreamStatus? {
-        if ScreenshotMode.isActive { return ScreenshotFixtures.status }
-        guard let channelId = credentials?.channelId else { return nil }
-        return try? await api.status(channelId: channelId)
-    }
 }
