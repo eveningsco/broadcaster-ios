@@ -48,8 +48,8 @@ struct HomeView: View {
     @State private var dragRole: DragRole = .stage
     @State private var tabDragTranslation: CGFloat = 0
     /// The track detail card over the home layer (tapped cover in either
-    /// list), and the namespace its cover flies in. Screenshot mode's
-    /// `track` scene starts with it open, already expanded (posed).
+    /// list). Screenshot mode's `track` scene starts with it open, already
+    /// expanded (posed).
     @State private var detail: TrackDetailSelection? =
         ScreenshotMode.scene?.opensDetails == true
             ? ScreenshotFixtures.library.first.map {
@@ -57,10 +57,11 @@ struct HomeView: View {
             }
             : nil
     @State private var heroExpanded = ScreenshotMode.scene?.opensDetails == true
-    @Namespace private var heroNamespace
     /// Screenshot mode's `track-demo` scene: where the ghost fingertip is
-    /// (see `runTrackDemo`). Nil otherwise.
+    /// and the list covers' frames it taps (see `runTrackDemo`). Idle
+    /// otherwise.
     @State private var demoFinger: DemoFinger?
+    @State private var demoCoverFrames: [String: CGRect] = [:]
 
     var body: some View {
         GeometryReader { geometry in
@@ -103,12 +104,12 @@ struct HomeView: View {
                     // frosted backdrop does the rest of the blur and dim.
                     .blur(radius: heroExpanded ? 6 : 0)
                     .scaleEffect(heroExpanded ? 0.94 : 1)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.84), value: heroExpanded)
 
                 if let detail {
                     TrackDetailOverlay(
                         selection: detail,
                         player: model.player,
-                        heroNamespace: heroNamespace,
                         expanded: $heroExpanded,
                         safeArea: geometry.safeAreaInsets,
                         onDismiss: { self.detail = nil }
@@ -125,7 +126,13 @@ struct HomeView: View {
                 }
             }
             .ignoresSafeArea()
+            // The space the detail card's cover flies in (row frame ↔ card).
+            .coordinateSpace(name: HeroSpace.name)
             .simultaneousGesture(swipeAway(width: width))
+            .onPreferenceChange(CoverFramesKey.self) { frames in
+                guard ScreenshotMode.scene?.animatesDetails == true else { return }
+                demoCoverFrames = frames
+            }
             .task {
                 guard ScreenshotMode.scene?.animatesDetails == true else { return }
                 await runTrackDemo()
@@ -209,14 +216,12 @@ struct HomeView: View {
                 searchQuery: searchActive ? searchQuery : "",
                 listAtTop: $listAtTop,
                 detail: $detail,
-                heroNamespace: heroNamespace,
                 heroExpanded: heroExpanded
             )
             .frame(width: width)
             ExploreListView(
                 scrollLocked: listsLocked,
                 detail: $detail,
-                heroNamespace: heroNamespace,
                 heroExpanded: heroExpanded
             )
             .frame(width: width)
@@ -396,10 +401,9 @@ struct HomeView: View {
     private func demoFingertip(_ finger: DemoFinger, width: CGFloat, safeArea: EdgeInsets) -> some View {
         switch finger {
         case .cover(let heroID):
-            // A non-source match borrows the cover's position, so the
-            // fingertip lands on the row without any frame plumbing.
+            let frame = demoCoverFrames[heroID] ?? CGRect(x: 44, y: safeArea.top + 120, width: 48, height: 48)
             DemoFingertip()
-                .matchedGeometryEffect(id: heroID, in: heroNamespace, properties: .position, isSource: false)
+                .position(x: frame.midX, y: frame.midY)
         case .backdrop:
             DemoFingertip()
                 .position(x: width / 2, y: safeArea.top + 64)
@@ -421,7 +425,9 @@ struct HomeView: View {
             demoTouch(nil)
             await demoPause(0.12)
             HomeHaptics.tap.impactOccurred()
-            detail = TrackDetailSelection(track: track, heroID: heroID)
+            detail = TrackDetailSelection(
+                track: track, heroID: heroID, sourceFrame: demoCoverFrames[heroID] ?? .zero
+            )
 
             // Hold the card open.
             await demoPause(3.4)

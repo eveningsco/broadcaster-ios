@@ -10,21 +10,55 @@ private enum TrackDetailHaptics {
 /// Which track the detail card is showing, and which list cover it grew
 /// out of. The hero id names the list too (`library-cover-12`,
 /// `explore-cover-12`) so a track present in both lists has exactly one
-/// matched-geometry source.
+/// hero source. `sourceFrame` is that cover's frame in `HeroSpace` at tap
+/// time: where the card's cover flies out from and back to.
 struct TrackDetailSelection: Equatable {
     let track: LibraryTrack
     let heroID: String
+    var sourceFrame: CGRect = .zero
 
     static func heroID(list: String, track: LibraryTrack) -> String {
         "\(list)-cover-\(track.id)"
     }
 }
 
+/// The coordinate space the hero flies in: `HomeView`'s full-screen ZStack,
+/// which hosts both the lists and the detail overlay.
+enum HeroSpace {
+    static let name = "hero"
+}
+
+/// Frames (in `HeroSpace`) of the list covers that can grow into the detail
+/// card, keyed by hero id. Rows publish their own; `HomeView` reads them all
+/// for the `track-demo` scene's fingertip.
+struct CoverFramesKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+/// Frame of the card's cover slot in the card container's own space.
+private struct SlotFrameKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
+    }
+}
+
 /// The track detail card, opened by tapping a track's cover in the Library
 /// or Explore list. Not a sheet: the 48pt artwork lifts out of its row and
-/// grows into the card's cover (`matchedGeometryEffect` on `HomeView`'s
-/// namespace) while the card's chrome fades in around it and the home
-/// layer dims and scales back behind.
+/// grows into the card's cover while the card's chrome fades in around it
+/// and the home layer dims and scales back behind.
+///
+/// The hero is done by hand rather than with `matchedGeometryEffect`: the
+/// row reports its cover's frame (`TrackDetailSelection.sourceFrame`), the
+/// card lays out an empty slot where the cover goes, and `hero` draws the
+/// artwork at whichever of the two frames `expanded` picks, with a
+/// value-based spring between them. (Toggling `isSource` on two mounted
+/// matched views made the cover jump: SwiftUI only interpolates the
+/// non-source view, and the one becoming the source snaps to its layout.)
 ///
 /// The card floats inset from the screen edges, bottom-anchored: title and
 /// byline, the cover, the description, a waveform scrubber with
@@ -43,10 +77,9 @@ struct TrackDetailOverlay: View {
     @EnvironmentObject private var model: AppModel
     let selection: TrackDetailSelection
     @ObservedObject var player: TrackPlayer
-    let heroNamespace: Namespace.ID
     /// True once the cover has flown out of its row. Owned by `HomeView` so
     /// the row knows to hide its copy; flipped back on dismiss, and the row
-    /// becomes the matched-geometry source again.
+    /// shows its cover again under the one flying home.
     @Binding var expanded: Bool
     let safeArea: EdgeInsets
     /// Called once the fly-back animation has finished; removes the overlay.
@@ -59,6 +92,9 @@ struct TrackDetailOverlay: View {
     /// Vertical card displacement while dragging to dismiss.
     @State private var dragOffset: CGFloat = 0
     @State private var dismissing = false
+    /// Where the card's cover sits (card-container space); the hero's
+    /// expanded frame. Measured from the slot laid out in `card`.
+    @State private var slotFrame: CGRect = .zero
 
     private var track: LibraryTrack { selection.track }
 
@@ -146,19 +182,29 @@ struct TrackDetailOverlay: View {
                 Color.black.opacity(0.2)
             }
             .opacity(expanded ? 1 - dragProgress : 0)
+            .animation(expanded ? .easeOut(duration: 0.4) : .easeIn(duration: 0.3), value: expanded)
             .ignoresSafeArea()
             .contentShape(Rectangle())
             .onTapGesture { dismiss() }
 
-            VStack(spacing: 12) {
-                card
-                pills
+            // Card container: fills the hero space so its own coordinates
+            // match it, and carries the drag offset for card and hero alike.
+            ZStack {
+                VStack(spacing: 12) {
+                    card
+                    pills
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, safeArea.top + 16)
+                .padding(.bottom, safeArea.bottom + 8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .gesture(dragToDismiss)
+
+                hero
             }
-            .padding(.horizontal, 16)
-            .padding(.top, safeArea.top + 16)
-            .padding(.bottom, safeArea.bottom + 8)
+            .coordinateSpace(name: "card")
+            .onPreferenceChange(SlotFrameKey.self) { slotFrame = $0 }
             .offset(y: dragOffset)
-            .gesture(dragToDismiss)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .onAppear {
@@ -192,7 +238,7 @@ struct TrackDetailOverlay: View {
             heading
                 .chrome(expanded)
 
-            cover
+            coverSlot
 
             if let description {
                 Text(description)
@@ -240,15 +286,41 @@ struct TrackDetailOverlay: View {
         }
     }
 
-    /// The hero. Non-source while collapsed, so it sits on the row's 48pt
-    /// artwork; becomes the source as it expands and the row's copy follows
-    /// it (hidden). The corner radius tweens from the row's 8pt.
-    private var cover: some View {
-        TrackArtwork(url: coverURL, symbolFont: .system(size: 56))
+    /// Where the cover goes in the card's layout; the hero draws over it.
+    private var coverSlot: some View {
+        Color.clear
             .aspectRatio(1, contentMode: .fit)
             .frame(maxWidth: 250)
-            .clipShape(RoundedRectangle(cornerRadius: expanded ? 28 : 8, style: .continuous))
-            .matchedGeometryEffect(id: selection.heroID, in: heroNamespace, isSource: expanded)
+            .background(GeometryReader { geometry in
+                Color.clear.preference(key: SlotFrameKey.self, value: geometry.frame(in: .named("card")))
+            })
+    }
+
+    /// The hero: the artwork, drawn at the row's 48pt frame while collapsed
+    /// and at the card's slot once expanded, springing between the two. It
+    /// is laid out at slot size and scaled, so the image never re-lays-out
+    /// mid-flight; the corner radius reads 8pt small and 28pt large. The
+    /// container carries `dragOffset`, so the collapsed target compensates
+    /// to land on the row wherever the card was let go.
+    private var hero: some View {
+        let slot = slotFrame.width > 0 ? slotFrame : CGRect(x: 0, y: 0, width: 250, height: 250)
+        let source = selection.sourceFrame.width > 0
+            ? selection.sourceFrame
+            : CGRect(x: slot.midX - 24, y: slot.midY - 24, width: 48, height: 48)
+        let target = expanded ? slot : source
+        let scale = target.width / slot.width
+        return TrackArtwork(url: coverURL, symbolFont: .system(size: 56))
+            .frame(width: slot.width, height: slot.height)
+            .clipShape(RoundedRectangle(cornerRadius: expanded ? 28 : 8 / scale, style: .continuous))
+            .scaleEffect(scale)
+            .position(x: target.midX, y: expanded ? target.midY : target.midY - dragOffset)
+            .animation(
+                expanded
+                    ? .spring(response: 0.45, dampingFraction: 0.84)
+                    : .spring(response: 0.4, dampingFraction: 0.86),
+                value: expanded
+            )
+            .allowsHitTesting(false)
     }
 
     private var heading: some View {

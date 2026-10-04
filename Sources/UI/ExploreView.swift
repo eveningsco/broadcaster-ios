@@ -14,10 +14,9 @@ struct ExploreListView: View {
     @EnvironmentObject private var model: AppModel
     /// True while the home swipe-away gesture is engaged.
     var scrollLocked = false
-    /// The track detail card (owned by HomeView, which hosts the overlay
-    /// and the hero namespace); tapping a cover sets it.
+    /// The track detail card (owned by HomeView, which hosts the overlay);
+    /// tapping a cover sets it.
     @Binding var detail: TrackDetailSelection?
-    var heroNamespace: Namespace.ID
     /// True while the detail card's cover has flown out of its row.
     var heroExpanded = false
 
@@ -73,11 +72,10 @@ struct ExploreListView: View {
                             showsListens: false,
                             onSave: canSave(track) ? { save(track) } : nil,
                             onShare: track.webURL != nil ? { copyLink(for: track) } : nil,
-                            onOpenDetails: {
+                            onOpenDetails: { coverFrame in
                                 ExploreHaptics.select.impactOccurred()
-                                detail = TrackDetailSelection(track: track, heroID: heroID)
+                                detail = TrackDetailSelection(track: track, heroID: heroID, sourceFrame: coverFrame)
                             },
-                            heroNamespace: heroNamespace,
                             heroID: heroID,
                             coverHidden: heroExpanded && detail?.heroID == heroID
                         )

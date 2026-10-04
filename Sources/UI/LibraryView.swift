@@ -24,10 +24,9 @@ struct LibraryListView: View {
     /// Screenshot mode's `edit` scenes open the editor on the first track.
     @State private var trackToEditAudio: LibraryTrack? =
         ScreenshotMode.scene?.opensEditor == true ? ScreenshotFixtures.library.first : nil
-    /// The track detail card (owned by HomeView, which hosts the overlay
-    /// and the hero namespace); tapping a cover sets it.
+    /// The track detail card (owned by HomeView, which hosts the overlay);
+    /// tapping a cover sets it.
     @Binding var detail: TrackDetailSelection?
-    var heroNamespace: Namespace.ID
     /// True while the detail card's cover has flown out of its row.
     var heroExpanded = false
     @State private var draftPendingDelete: Draft?
@@ -168,11 +167,10 @@ struct LibraryListView: View {
                         onDelete: track.owner == true ? { trackPendingDelete = track } : nil,
                         onRemove: track.owner != true ? { remove(track) } : nil,
                         onShare: track.webURL != nil ? { copyLink(for: track) } : nil,
-                        onOpenDetails: {
+                        onOpenDetails: { coverFrame in
                             LibraryHaptics.select.impactOccurred()
-                            detail = TrackDetailSelection(track: track, heroID: heroID)
+                            detail = TrackDetailSelection(track: track, heroID: heroID, sourceFrame: coverFrame)
                         },
-                        heroNamespace: heroNamespace,
                         heroID: heroID,
                         coverHidden: heroExpanded && detail?.heroID == heroID
                     )
@@ -278,18 +276,20 @@ struct TrackRow: View {
     var onShare: (() -> Void)?
     /// Tapping the cover opens the track detail card; the rest of the row
     /// still toggles playback (the list's tap gesture).
-    var onOpenDetails: (() -> Void)?
-    /// Hero transition into the detail card: the cover is the matched
-    /// geometry source until the card has expanded, then hides and follows
-    /// the card's cover so there's one visible element throughout.
-    var heroNamespace: Namespace.ID?
+    /// Passed the cover's frame in `HeroSpace`, where the card's cover
+    /// flies out from.
+    var onOpenDetails: ((CGRect) -> Void)?
+    /// Hero transition into the detail card: the cover publishes its frame
+    /// under `heroID` (`CoverFramesKey`) and hides while the card's copy is
+    /// up, so there's one visible element throughout.
     var heroID: String?
     var coverHidden = false
+    @State private var coverFrame: CGRect = .zero
 
     var body: some View {
         HStack(spacing: 12) {
             if let onOpenDetails {
-                Button(action: onOpenDetails) {
+                Button(action: { onOpenDetails(coverFrame) }) {
                     artwork
                 }
                 .buttonStyle(.plain)
@@ -373,9 +373,17 @@ struct TrackRow: View {
         let base = TrackArtwork(url: (track.image ?? track.station?.image).flatMap(URL.init(string:)))
             .frame(width: 48, height: 48)
             .clipShape(RoundedRectangle(cornerRadius: 8))
-        if let heroNamespace, let heroID {
+        if let heroID {
             base
-                .matchedGeometryEffect(id: heroID, in: heroNamespace, isSource: !coverHidden)
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: CoverFramesKey.self,
+                        value: [heroID: geometry.frame(in: .named(HeroSpace.name))]
+                    )
+                })
+                .onPreferenceChange(CoverFramesKey.self) { frames in
+                    if let frame = frames[heroID] { coverFrame = frame }
+                }
                 .opacity(coverHidden ? 0 : 1)
         } else {
             base
