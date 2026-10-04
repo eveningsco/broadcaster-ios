@@ -15,6 +15,8 @@ enum ScreenshotMode {
     enum Scene: String, CaseIterable {
         /// Signed out: the sign-in form.
         case login
+        /// Signed out: the account-creation form (pushed over sign-in).
+        case signup
         /// Home with the Library tab over the stage.
         case library
         /// Home with the Explore tab (live channels + recent tracks).
@@ -24,7 +26,7 @@ enum ScreenshotMode {
         /// The stage on air: LIVE badge and elapsed timer.
         case live
 
-        var isSignedIn: Bool { self != .login }
+        var isSignedIn: Bool { self != .login && self != .signup }
         var showsStage: Bool { self == .stage || self == .live }
     }
 

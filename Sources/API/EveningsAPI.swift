@@ -25,6 +25,14 @@ struct RefreshResponse: Codable {
     let station: Station?
 }
 
+/// Website-style tokens from POST /auth/signup: not device-scoped (no stream
+/// key), so the app follows a sign-up with /v1/devices/connect.
+struct AuthTokens: Codable {
+    let accessToken: String
+    let refreshToken: String
+    let expiresIn: Int
+}
+
 struct StreamStatus: Codable {
     let online: Bool
     let listeners: Int
@@ -134,6 +142,17 @@ struct EveningsAPI {
         try await post(
             path: "/v1/devices/connect",
             body: ["email": email, "password": password, "deviceId": deviceId, "deviceName": deviceName]
+        )
+    }
+
+    /// Creates a station + account — the same endpoint and body as the
+    /// website's sign-up form, so the account gets the same setup (channel,
+    /// stream key, trial subscription). 409 when the email is taken; 400
+    /// when the server rejects a field (Joi) or account setup fails.
+    func signUp(email: String, stationName: String, password: String) async throws -> AuthTokens {
+        try await post(
+            path: "/auth/signup",
+            body: ["email": email, "stationName": stationName, "password": password]
         )
     }
 

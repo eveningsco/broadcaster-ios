@@ -6,6 +6,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var credentials: Credentials?
     @Published private(set) var isLoggingIn = false
     @Published var loginError: String?
+    @Published private(set) var isSigningUp = false
+    @Published var signUpError: String?
 
     @Published private(set) var library: [LibraryTrack] = []
     @Published private(set) var isLoadingLibrary = false
@@ -65,7 +67,7 @@ final class AppModel: ObservableObject {
             broadcast.setScreenshotState(.idle, levelDb: -27)
         case .live:
             broadcast.setScreenshotState(.live(since: ScreenshotFixtures.liveSince), levelDb: -14)
-        case .login, .library, .explore:
+        case .login, .signup, .library, .explore:
             break
         }
     }
@@ -88,27 +90,63 @@ final class AppModel: ObservableObject {
         loginError = nil
         defer { isLoggingIn = false }
         do {
-            let deviceId = await UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
-            let deviceName = await UIDevice.current.name
-            let response = try await api.connect(
-                email: email,
-                password: password,
-                deviceId: deviceId,
-                deviceName: deviceName
-            )
-            let credentials = Credentials(
-                accessToken: response.accessToken,
-                accessTokenExpiresAt: Date().addingTimeInterval(TimeInterval(response.expiresIn)),
-                refreshToken: response.refreshToken,
-                streamKey: response.streamKey,
-                channelId: response.channelId,
-                station: response.station
-            )
-            try Keychain.save(credentials)
-            self.credentials = credentials
+            try await connectDevice(email: email, password: password)
         } catch {
             loginError = error.localizedDescription
         }
+    }
+
+    /// Creates an account the way the website does (POST /auth/signup), then
+    /// connects this device with the new credentials so the session ends up
+    /// identical to a login's (stream key, device-scoped refresh token).
+    /// Errors land in signUpError; success flips isLoggedIn.
+    func signUp(email: String, stationName: String, password: String) async {
+        isSigningUp = true
+        signUpError = nil
+        defer { isSigningUp = false }
+        do {
+            _ = try await api.signUp(email: email, stationName: stationName, password: password)
+        } catch APIError.server(let status, _) where status == 409 {
+            signUpError = "An account with this email already exists. Try logging in instead."
+            return
+        } catch APIError.server(let status, _) where status == 400 {
+            // Joi validation or a failed account setup; the server's body is
+            // plain text here, so use our own words.
+            signUpError = "We couldn't create your account. Check your details and try again."
+            return
+        } catch {
+            signUpError = error.localizedDescription
+            return
+        }
+        do {
+            try await connectDevice(email: email, password: password)
+        } catch {
+            // The account exists; only the device hand-off failed (network).
+            signUpError = "Your account was created, but we couldn't sign you in. Please log in."
+        }
+    }
+
+    /// POST /v1/devices/connect with this device's identity; persists the
+    /// resulting session and makes it current.
+    private func connectDevice(email: String, password: String) async throws {
+        let deviceId = await UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+        let deviceName = await UIDevice.current.name
+        let response = try await api.connect(
+            email: email,
+            password: password,
+            deviceId: deviceId,
+            deviceName: deviceName
+        )
+        let credentials = Credentials(
+            accessToken: response.accessToken,
+            accessTokenExpiresAt: Date().addingTimeInterval(TimeInterval(response.expiresIn)),
+            refreshToken: response.refreshToken,
+            streamKey: response.streamKey,
+            channelId: response.channelId,
+            station: response.station
+        )
+        try Keychain.save(credentials)
+        self.credentials = credentials
     }
 
     func logout() {
