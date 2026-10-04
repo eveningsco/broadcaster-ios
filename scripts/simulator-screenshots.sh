@@ -17,7 +17,7 @@
 #   APPEARANCE     light | dark | both (default: dark; the app forces its dark
 #                  palette via UIUserInterfaceStyle, so light looks the same)
 #   SETTLE         seconds to wait after launch before capturing (default: 4)
-#   VIDEO_SECONDS  recording length for -demo scenes (default: 18)
+#   VIDEO_SECONDS  recording length for -demo scenes (default: 24)
 #   VIDEO_FPS      animated-PNG frame rate (default: 15)
 #   VIDEO_HEIGHT   animated-PNG height in px (default: 1300, ~half of a 3x
 #                  iPhone; the .mov keeps full resolution)
@@ -35,7 +35,7 @@ DEVICE=${DEVICE:-iPhone 16 Pro}
 SCENES=${SCENES:-login signup library explore account edit track stage live}
 APPEARANCE=${APPEARANCE:-dark}
 SETTLE=${SETTLE:-4}
-VIDEO_SECONDS=${VIDEO_SECONDS:-18}
+VIDEO_SECONDS=${VIDEO_SECONDS:-24}
 VIDEO_FPS=${VIDEO_FPS:-15}
 VIDEO_HEIGHT=${VIDEO_HEIGHT:-1300}
 BUNDLE_ID=co.evenings.EveningsBroadcaster

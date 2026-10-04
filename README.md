@@ -124,8 +124,9 @@ detail card — cover, scrubber, share and Edit — floating over the library), 
 animate instead of posing — `edit-demo` has the editor trim, audition and
 re-speed a track by itself with a ghost fingertip; `track-demo` taps a
 track's cover so it flies out of the row into the detail card over the
-frosted library, dismisses it and repeats — and the capture script
-*records* them (`simctl io recordVideo`, ~18 s) into `<scene>.mov` plus an
+frosted library, dismisses it and repeats (at half speed, so the ~15 fps
+CI simulator catches the motion) — and the capture script
+*records* them (`simctl io recordVideo`, ~24 s) into `<scene>.mov` plus an
 animated `<scene>.png`, so `--scenes edit-demo` yields a short video of the
 editor in motion. On a Mac:
 

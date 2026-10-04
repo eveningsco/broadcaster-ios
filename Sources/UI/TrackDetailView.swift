@@ -33,23 +33,28 @@ enum HeroSpace {
 /// recession — so the open reads as a single motion rather than parts on
 /// their own clocks.
 enum TrackDetailMotion {
+    /// 1 on device. The recorded `track-demo` scene plays at half speed
+    /// (2): the CI simulator draws ~15 fps, which turns a 0.5 s spring
+    /// into five or six frames — too few to read as motion.
+    static let timeScale: Double = ScreenshotMode.recordsDetails ? 2 : 1
     /// The hero's flight and the card rising under it.
-    static let open = Animation.spring(response: 0.5, dampingFraction: 0.82)
+    static let open = Animation.spring(response: 0.5, dampingFraction: 0.82).speed(1 / timeScale)
     /// The fly-back: a touch quicker and more damped, it lands rather than bounces.
-    static let close = Animation.spring(response: 0.38, dampingFraction: 0.9)
+    static let close = Animation.spring(response: 0.38, dampingFraction: 0.9).speed(1 / timeScale)
     /// Chrome and pills leaving ahead of the cover on dismiss.
-    static let exit = Animation.easeIn(duration: 0.2)
+    static let exit = Animation.easeIn(duration: 0.2 * timeScale)
     /// When the overlay can be removed after `close` starts (no
     /// animation-completion hook before iOS 17).
-    static let settle: TimeInterval = 0.45
+    static let settle: TimeInterval = 0.45 * timeScale
 
     /// Stagger of the card's chrome behind the cover, top to bottom.
-    static let headingDelay: Double = 0.04
-    static let scrubberDelay: Double = 0.1
-    static let transportDelay: Double = 0.14
+    /// (Applied after `speed`, so scaled by hand.)
+    static let headingDelay: Double = 0.04 * timeScale
+    static let scrubberDelay: Double = 0.1 * timeScale
+    static let transportDelay: Double = 0.14 * timeScale
     /// The pills land last, left then right.
-    static let leftPillDelay: Double = 0.18
-    static let rightPillDelay: Double = 0.24
+    static let leftPillDelay: Double = 0.18 * timeScale
+    static let rightPillDelay: Double = 0.24 * timeScale
 }
 
 /// Frames (in `HeroSpace`) of the list covers that can grow into the detail
@@ -199,22 +204,45 @@ struct TrackDetailOverlay: View {
         min(max(dragOffset / 400, 0), 0.6)
     }
 
+    /// Recorded demo only: whether the frosted backdrop is in (it follows
+    /// the hero's settle rather than the flight; see `body`).
+    @State private var frosted = false
+
+    private var backdropAnimation: Animation? {
+        if ScreenshotMode.recordsDetails {
+            return expanded ? TrackDetailMotion.open : TrackDetailMotion.exit
+        }
+        // Posed stills arrive expanded, nothing to animate.
+        if ScreenshotMode.isActive { return nil }
+        return expanded ? .easeOut(duration: 0.45) : .easeIn(duration: 0.3)
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             // Backdrop: frosted blur over the home layer with a light dim
             // (the app is dark-only, so the material tints dark), tap to
             // dismiss. Fades with the chrome and thins as the card is
             // dragged, so the fly-back lands on a crisp library.
+            //
+            // Recorded (`track-demo`): the CI simulator software-renders a
+            // material over a moving layer so slowly that the whole flight
+            // would be skipped, so a plain dim tweens with the hero and the
+            // frost arrives only once everything below it has settled
+            // (`frosted`); it leaves instantly on dismiss.
             ZStack {
-                Rectangle().fill(.ultraThinMaterial)
-                Color.black.opacity(0.2)
+                if ScreenshotMode.recordsDetails {
+                    Color.black.opacity(0.55)
+                    Rectangle().fill(.ultraThinMaterial)
+                        .overlay(Color.black.opacity(0.2))
+                        .opacity(frosted ? 1 : 0)
+                        .animation(frosted ? Animation.easeOut(duration: 0.3) : nil, value: frosted)
+                } else {
+                    Rectangle().fill(.ultraThinMaterial)
+                    Color.black.opacity(0.2)
+                }
             }
             .opacity(expanded ? 1 - dragProgress : 0)
-            // Stepped in screenshot mode: see HomeView's library layer.
-            .animation(
-                ScreenshotMode.isActive ? nil : (expanded ? .easeOut(duration: 0.45) : .easeIn(duration: 0.3)),
-                value: expanded
-            )
+            .animation(backdropAnimation, value: expanded)
             .ignoresSafeArea()
             .contentShape(Rectangle())
             .onTapGesture { dismiss() }
@@ -239,11 +267,21 @@ struct TrackDetailOverlay: View {
             .offset(y: dragOffset)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .onChange(of: expanded) { expanded in
+            guard ScreenshotMode.recordsDetails else { return }
+            if expanded {
+                DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.settle) {
+                    if self.expanded { frosted = true }
+                }
+            } else {
+                frosted = false
+            }
+        }
         .onAppear {
             // Screenshot mode arrives already expanded (posed). Otherwise
             // wait one runloop so the cover has been laid out at the row's
             // frame before it flies.
-            guard !expanded else { return }
+            guard !expanded else { frosted = true; return }
             TrackDetailHaptics.snap.prepare()
             DispatchQueue.main.async {
                 withAnimation(TrackDetailMotion.open) {

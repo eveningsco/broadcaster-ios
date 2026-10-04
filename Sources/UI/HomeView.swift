@@ -107,15 +107,20 @@ struct HomeView: View {
                     // frosted backdrop does the rest of the blur and dim.
                     // The blur radius steps rather than tweens: re-blurring
                     // the whole layer every frame is costly and the frost
-                    // above hides the step. The recession is stepped too in
-                    // screenshot mode — the CI simulator software-renders
-                    // the material over a moving layer so slowly that the
-                    // recording would skip the whole flight.
-                    .blur(radius: heroExpanded ? 6 : 0)
+                    // above hides the step.
+                    //
+                    // Screenshot mode: the CI simulator software-renders a
+                    // material over a moving layer so slowly that the
+                    // recording would skip the whole flight. Posed stills
+                    // step everything; the recorded `track-demo` tweens the
+                    // recession (its backdrop keeps the frost off until the
+                    // layer is still) and skips the layer blur, which the
+                    // frost hides anyway.
+                    .blur(radius: heroExpanded && !ScreenshotMode.recordsDetails ? 6 : 0)
                     .animation(nil, value: heroExpanded)
                     .scaleEffect(heroExpanded ? 0.94 : 1)
                     .animation(
-                        ScreenshotMode.isActive
+                        ScreenshotMode.isActive && !ScreenshotMode.recordsDetails
                             ? nil
                             : (heroExpanded ? TrackDetailMotion.open : TrackDetailMotion.close),
                         value: heroExpanded
@@ -465,8 +470,8 @@ struct HomeView: View {
                 track: track, heroID: heroID, sourceFrame: demoCoverFrames[heroID] ?? .zero
             )
 
-            // Hold the card open.
-            await demoPause(3.4)
+            // Hold the card open (the frost arrives once the hero settles).
+            await demoPause(3.0)
 
             // Tap the backdrop: same as TrackDetailOverlay.dismiss().
             demoTouch(.backdrop)
@@ -478,7 +483,7 @@ struct HomeView: View {
             await demoPause(TrackDetailMotion.settle)
             detail = nil
 
-            await demoPause(1.8)
+            await demoPause(1.4)
         }
     }
 

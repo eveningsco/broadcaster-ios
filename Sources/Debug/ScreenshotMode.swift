@@ -70,6 +70,9 @@ enum ScreenshotMode {
     }()
 
     static var isActive: Bool { scene != nil }
+    /// The `track-demo` recording: the detail card's motion is tuned for
+    /// the CI simulator's slow renderer (see TrackDetailMotion.timeScale).
+    static var recordsDetails: Bool { scene?.animatesDetails == true }
 }
 
 /// Translucent fingertip, roughly a thumb's contact patch, marking each
