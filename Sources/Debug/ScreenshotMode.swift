@@ -21,6 +21,8 @@ enum ScreenshotMode {
         case library
         /// Home with the Explore tab (live channels + recent tracks).
         case explore
+        /// The account sheet (station photo, name, sign out) over the library.
+        case account
         /// The audio editor (trim + tempo) sheet over the library.
         case edit
         /// The audio editor driving itself through a trim, an audition and a
@@ -59,7 +61,7 @@ enum ScreenshotMode {
 /// Fixture data for screenshot mode. Fixed dates and no artwork URLs so the
 /// captures are deterministic and need no network.
 enum ScreenshotFixtures {
-    static let station = Station(id: 42, slug: "late-shift", name: "Late Shift")
+    static let station = Station(id: 42, slug: "late-shift", name: "Late Shift", image: nil)
 
     static let credentials = Credentials(
         accessToken: "screenshot",

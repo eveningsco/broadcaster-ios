@@ -86,7 +86,7 @@ def current_branch():
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ref", default=current_branch())
-    p.add_argument("--scenes", default="login signup library explore edit stage live",
+    p.add_argument("--scenes", default="login signup library explore account edit stage live",
                    help="space-separated scenes; ones ending in -demo are recorded (animated PNG)")
     p.add_argument("--device", default="iPhone 16 Pro")
     p.add_argument("--appearance", default="dark", choices=["light", "dark", "both"])

@@ -36,6 +36,8 @@ struct HomeView: View {
         case explore
     }
     @State private var cardTab: CardTab = ScreenshotMode.scene == .explore ? .explore : .library
+    /// The account sheet (station photo, name, sign out) from the header gear.
+    @State private var showingAccount = ScreenshotMode.scene == .account
     /// What a horizontal drag is moving: the whole card off the stage, or
     /// the tab strip inside the card (library ↔ explore). Locked when the
     /// drag engages so a mid-gesture direction reversal doesn't switch jobs.
@@ -89,6 +91,9 @@ struct HomeView: View {
         // The keyboard overlays the content: without this the geometry
         // shrinks when it appears and the whole page shifts up.
         .ignoresSafeArea(.keyboard)
+        .sheet(isPresented: $showingAccount) {
+            AccountSheet()
+        }
         .onChange(of: libraryShown) { shown in
             HomeHaptics.snap.impactOccurred(intensity: 0.9)
             // Pause (don't stop) so the mini player is still there, loaded,
@@ -173,6 +178,7 @@ struct HomeView: View {
                         cardTabTitle("Library", tab: .library)
                         cardTabTitle("Explore", tab: .explore)
                         Spacer()
+                        AccountButton { showingAccount = true }
                         LoopButton(player: model.player)
                     }
                     .padding(.horizontal, 24)
@@ -364,6 +370,24 @@ struct HomeView: View {
                     tabDragTranslation = 0
                 }
             }
+    }
+}
+
+/// Opens the account sheet; sits beside the loop toggle in the card header
+/// and shares its 44pt hit target and muted ink.
+struct AccountButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "gearshape")
+                .font(.body.weight(.medium))
+                .foregroundStyle(Color(.systemGray))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Account")
     }
 }
 
