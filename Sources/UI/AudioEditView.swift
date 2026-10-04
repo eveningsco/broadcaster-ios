@@ -96,8 +96,6 @@ struct AudioEditSheet: View {
                 Spacer(minLength: 0)
 
                 VStack(spacing: 10) {
-                    readouts
-
                     Group {
                         if isReady {
                             TrimStrip(
@@ -194,36 +192,6 @@ struct AudioEditSheet: View {
                 waveform.teardown()
             }
         }
-    }
-
-    /// In / selected / Out as one small line above the strip. Plain text,
-    /// no nudgers: fine positioning is handle-drag only, so the row stays
-    /// out of the way of the waveform it describes.
-    private var readouts: some View {
-        HStack(spacing: 0) {
-            readout(label: "In", time: trimStart * duration)
-            Spacer(minLength: 8)
-            readout(label: "\(Self.format(selectedDuration)) selected")
-            Spacer(minLength: 8)
-            readout(label: "Out", time: trimEnd * duration)
-        }
-        .font(.social(.footnote))
-        .monospacedDigit()
-        .lineLimit(1)
-        .opacity(isReady ? 1 : 0)
-    }
-
-    private func readout(label: String, time: TimeInterval? = nil) -> some View {
-        HStack(spacing: 4) {
-            Text(label)
-                .foregroundStyle(.secondary)
-            if let time {
-                Text(Self.format(time))
-            }
-        }
-        // Never wrap: three h:mm:ss readouts on an hour-long set barely
-        // fit the row, and a broken "16:05" is unreadable.
-        .fixedSize()
     }
 
     private var transport: some View {
