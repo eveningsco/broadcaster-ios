@@ -177,15 +177,17 @@ struct AudioEditSheet: View {
                     commitSelection()
                 }
             )
-            Spacer()
+            Spacer(minLength: 8)
             VStack(spacing: 2) {
                 Text(Self.format(selectedDuration))
-                    .font(.system(.body, design: .monospaced))
+                    .font(.system(.callout, design: .monospaced))
+                    .lineLimit(1)
+                    .fixedSize()
                 Text("selected")
                     .font(.social(.caption2))
                     .foregroundStyle(.secondary)
             }
-            Spacer()
+            Spacer(minLength: 8)
             nudger(
                 label: "Out",
                 time: trimEnd * duration,
@@ -206,7 +208,7 @@ struct AudioEditSheet: View {
         onNudge: @escaping (Double) -> Void
     ) -> some View {
         VStack(spacing: 2) {
-            HStack(spacing: 10) {
+            HStack(spacing: 4) {
                 Button {
                     TrimHaptics.tick.selectionChanged()
                     onNudge(-1)
@@ -217,8 +219,12 @@ struct AudioEditSheet: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // Never wrap: three h:mm:ss readouts barely fit the row
+                // on an hour-long set, and a broken "16:05" is unreadable.
                 Text(Self.format(time))
-                    .font(.system(.body, design: .monospaced))
+                    .font(.system(.callout, design: .monospaced))
+                    .lineLimit(1)
+                    .fixedSize()
                 Button {
                     TrimHaptics.tick.selectionChanged()
                     onNudge(1)
