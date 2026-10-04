@@ -175,20 +175,6 @@ struct TrackDetailOverlay: View {
         return parts.joined(separator: " · ")
     }
 
-    private var footnote: String {
-        var parts: [String] = []
-        if totalDuration > 0 {
-            let total = Int(totalDuration)
-            let h = total / 3600
-            let m = (total % 3600) / 60
-            parts.append(h > 0 ? "\(h)h \(m)m" : "\(m)m")
-        }
-        if let listens = current.listens, listens > 0 {
-            parts.append("\(listens) listen\(listens == 1 ? "" : "s")")
-        }
-        return parts.joined(separator: " · ")
-    }
-
     private var description: String? {
         let text = (current.description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
@@ -405,11 +391,6 @@ struct TrackDetailOverlay: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .lineLimit(1)
-            }
-            if !footnote.isEmpty {
-                Text(footnote)
-                    .font(.social(.footnote))
-                    .foregroundStyle(.tertiary)
             }
         }
         .frame(maxWidth: .infinity)
