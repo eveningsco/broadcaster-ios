@@ -95,34 +95,36 @@ struct AudioEditSheet: View {
             VStack(spacing: 24) {
                 Spacer(minLength: 0)
 
-                Group {
-                    if isReady {
-                        TrimStrip(
-                            start: $trimStart,
-                            end: $trimEnd,
-                            progress: progress,
-                            levels: levels,
-                            minGap: minGapFraction,
-                            onScrubBegin: { preview.beginScrub() },
-                            onScrubMove: { preview.scrubTo(fraction: $0) },
-                            onScrub: { preview.endScrub(at: $0) },
-                            onHandleMoved: { commitSelection() }
-                        )
-                    } else {
-                        ProgressView("Loading audio…")
+                VStack(spacing: 10) {
+                    readouts
+
+                    Group {
+                        if isReady {
+                            TrimStrip(
+                                start: $trimStart,
+                                end: $trimEnd,
+                                progress: progress,
+                                levels: levels,
+                                minGap: minGapFraction,
+                                onScrubBegin: { preview.beginScrub() },
+                                onScrubMove: { preview.scrubTo(fraction: $0) },
+                                onScrub: { preview.endScrub(at: $0) },
+                                onHandleMoved: { commitSelection() }
+                            )
+                        } else {
+                            ProgressView("Loading audio…")
+                        }
                     }
-                }
-                .frame(height: 132)
-                .overlay {
-                    if case .strip(let fraction) = demo.finger {
-                        GeometryReader { geometry in
-                            Demo.Fingertip()
-                                .position(x: fraction * geometry.size.width, y: geometry.size.height / 2)
+                    .frame(height: 132)
+                    .overlay {
+                        if case .strip(let fraction) = demo.finger {
+                            GeometryReader { geometry in
+                                Demo.Fingertip()
+                                    .position(x: fraction * geometry.size.width, y: geometry.size.height / 2)
+                            }
                         }
                     }
                 }
-
-                readouts
 
                 transport
 
@@ -194,81 +196,34 @@ struct AudioEditSheet: View {
         }
     }
 
+    /// In / selected / Out as one small line above the strip. Plain text,
+    /// no nudgers: fine positioning is handle-drag only, so the row stays
+    /// out of the way of the waveform it describes.
     private var readouts: some View {
         HStack(spacing: 0) {
-            nudger(
-                label: "In",
-                time: trimStart * duration,
-                onNudge: { delta in
-                    let step = duration > 0 ? delta / duration : 0
-                    trimStart = min(max(trimStart + step, 0), trimEnd - minGapFraction)
-                    commitSelection()
-                }
-            )
+            readout(label: "In", time: trimStart * duration)
             Spacer(minLength: 8)
-            VStack(spacing: 2) {
-                Text(Self.format(selectedDuration))
-                    .font(.system(.callout, design: .monospaced))
-                    .lineLimit(1)
-                    .fixedSize()
-                Text("selected")
-                    .font(.social(.caption2))
-                    .foregroundStyle(.secondary)
-            }
+            readout(label: "\(Self.format(selectedDuration)) selected")
             Spacer(minLength: 8)
-            nudger(
-                label: "Out",
-                time: trimEnd * duration,
-                onNudge: { delta in
-                    let step = duration > 0 ? delta / duration : 0
-                    trimEnd = min(max(trimEnd + step, trimStart + minGapFraction), 1)
-                    commitSelection()
-                }
-            )
+            readout(label: "Out", time: trimEnd * duration)
         }
+        .font(.social(.footnote))
+        .monospacedDigit()
+        .lineLimit(1)
+        .opacity(isReady ? 1 : 0)
     }
 
-    /// A time readout flanked by ±1 s chevrons for fine adjustment — the
-    /// strip is far too coarse for second-level cuts on a long set.
-    private func nudger(
-        label: String,
-        time: TimeInterval,
-        onNudge: @escaping (Double) -> Void
-    ) -> some View {
-        VStack(spacing: 2) {
-            HStack(spacing: 4) {
-                Button {
-                    TrimHaptics.tick.selectionChanged()
-                    onNudge(-1)
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.footnote.weight(.semibold))
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                // Never wrap: three h:mm:ss readouts barely fit the row
-                // on an hour-long set, and a broken "16:05" is unreadable.
-                Text(Self.format(time))
-                    .font(.system(.callout, design: .monospaced))
-                    .lineLimit(1)
-                    .fixedSize()
-                Button {
-                    TrimHaptics.tick.selectionChanged()
-                    onNudge(1)
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
+    private func readout(label: String, time: TimeInterval? = nil) -> some View {
+        HStack(spacing: 4) {
             Text(label)
-                .font(.social(.caption2))
                 .foregroundStyle(.secondary)
+            if let time {
+                Text(Self.format(time))
+            }
         }
-        .disabled(!isReady)
+        // Never wrap: three h:mm:ss readouts on an hour-long set barely
+        // fit the row, and a broken "16:05" is unreadable.
+        .fixedSize()
     }
 
     private var transport: some View {
