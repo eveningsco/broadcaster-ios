@@ -52,8 +52,9 @@ enum TrackDetailMotion {
     static let headingDelay: Double = 0.04 * timeScale
     static let scrubberDelay: Double = 0.1 * timeScale
     static let transportDelay: Double = 0.14 * timeScale
-    /// The pills land last, left then right.
+    /// The pills land last, left to right.
     static let leftPillDelay: Double = 0.18 * timeScale
+    static let middlePillDelay: Double = 0.21 * timeScale
     static let rightPillDelay: Double = 0.24 * timeScale
 }
 
@@ -95,8 +96,8 @@ private struct SlotFrameKey: PreferenceKey {
 ///
 /// The card floats inset from the screen edges, bottom-anchored: title and
 /// byline, the cover, the description, a waveform scrubber with
-/// elapsed/total, and a transport (−15 s, play/pause, +15 s). Two pills
-/// float under it: share + loop on the left, Edit on the right, which opens
+/// elapsed/total, and a transport (−15 s, play/pause, +15 s). Three pills
+/// float under it: Share, Loop and Edit, the last of which opens
 /// the combined audio editor (`AudioEditSheet`). Owners get Edit Details
 /// from a `…` in the card's corner.
 ///
@@ -478,55 +479,41 @@ struct TrackDetailOverlay: View {
 
     // MARK: Pills
 
-    /// Share + loop in one pill on the left, Edit on the right, floating
-    /// under the card on the same surface. They land last: each rises from
-    /// below its resting spot and swells up, left a beat before right, and
+    /// Three labelled pills under the card on the same surface: Share,
+    /// Loop and Edit, equal widths. They land last: each rises from below
+    /// its resting spot and swells up, left to right a beat apart, and
     /// drops away first on dismiss.
     private var pills: some View {
         HStack(spacing: 12) {
-            HStack(spacing: 0) {
-                if let url = current.webURL {
-                    ShareLink(item: url, subject: Text(current.title ?? "Untitled")) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.title3)
-                            .frame(width: 60, height: 56)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Share link")
-                }
-                Button {
-                    TrackDetailHaptics.tap.impactOccurred()
-                    player.toggleLooping()
-                } label: {
-                    Image(systemName: "repeat")
-                        .font(.title3)
-                        .foregroundStyle(player.isLoopingCurrent && isLoaded ? Color.eveningsRed : .primary)
-                        .frame(width: 60, height: 56)
-                        .contentShape(Rectangle())
+            if let url = current.webURL {
+                ShareLink(item: url, subject: Text(current.title ?? "Untitled")) {
+                    pillLabel("Share", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(.plain)
-                .disabled(!isLoaded)
-                .opacity(isLoaded ? 1 : 0.4)
-                .accessibilityLabel("Loop")
+                .accessibilityLabel("Share link")
+                .reveal(expanded, delay: TrackDetailMotion.leftPillDelay, rise: 44, scale: 0.86)
             }
-            .padding(.horizontal, 8)
-            .background(Capsule().fill(surface))
-            .reveal(expanded, delay: TrackDetailMotion.leftPillDelay, rise: 44, scale: 0.86)
 
-            Spacer(minLength: 0)
+            Button {
+                TrackDetailHaptics.tap.impactOccurred()
+                player.toggleLooping()
+            } label: {
+                pillLabel("Loop", systemImage: "repeat",
+                          tint: player.isLoopingCurrent && isLoaded ? Color.eveningsRed : .primary)
+            }
+            .buttonStyle(.plain)
+            .disabled(!isLoaded)
+            .opacity(isLoaded ? 1 : 0.4)
+            .accessibilityLabel("Loop")
+            .accessibilityAddTraits(player.isLoopingCurrent && isLoaded ? .isSelected : [])
+            .reveal(expanded, delay: TrackDetailMotion.middlePillDelay, rise: 44, scale: 0.86)
 
             if current.audioURL != nil {
                 Button {
                     TrackDetailHaptics.tap.impactOccurred()
                     editingAudio = true
                 } label: {
-                    Label("Edit", systemImage: "slider.horizontal.3")
-                        .font(.social(.body, weight: .bold))
-                        .padding(.horizontal, 28)
-                        .frame(height: 56)
-                        .background(Capsule().fill(surface))
-                        .contentShape(Capsule())
+                    pillLabel("Edit", systemImage: "slider.horizontal.3")
                 }
                 .buttonStyle(.plain)
                 .disabled(playbackBlocked)
@@ -534,6 +521,21 @@ struct TrackDetailOverlay: View {
                 .reveal(expanded, delay: TrackDetailMotion.rightPillDelay, rise: 44, scale: 0.86)
             }
         }
+    }
+
+    /// One pill's face: icon + bold label, centred, on the card's surface.
+    /// All three share it so they read as one set.
+    private func pillLabel(_ title: String, systemImage: String, tint: Color = .primary) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.social(.body, weight: .bold))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity)
+            .frame(height: 56)
+            .background(Capsule().fill(surface))
+            .contentShape(Capsule())
     }
 
     // MARK: Dismissal
