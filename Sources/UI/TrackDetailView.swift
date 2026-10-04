@@ -28,6 +28,30 @@ enum HeroSpace {
     static let name = "hero"
 }
 
+/// One set of curves for everything that moves with the detail card — the
+/// hero, the card surface, its chrome, the pills and the home layer's
+/// recession — so the open reads as a single motion rather than parts on
+/// their own clocks.
+enum TrackDetailMotion {
+    /// The hero's flight and the card rising under it.
+    static let open = Animation.spring(response: 0.5, dampingFraction: 0.82)
+    /// The fly-back: a touch quicker and more damped, it lands rather than bounces.
+    static let close = Animation.spring(response: 0.38, dampingFraction: 0.9)
+    /// Chrome and pills leaving ahead of the cover on dismiss.
+    static let exit = Animation.easeIn(duration: 0.2)
+    /// When the overlay can be removed after `close` starts (no
+    /// animation-completion hook before iOS 17).
+    static let settle: TimeInterval = 0.45
+
+    /// Stagger of the card's chrome behind the cover, top to bottom.
+    static let headingDelay: Double = 0.04
+    static let scrubberDelay: Double = 0.1
+    static let transportDelay: Double = 0.14
+    /// The pills land last, left then right.
+    static let leftPillDelay: Double = 0.18
+    static let rightPillDelay: Double = 0.24
+}
+
 /// Frames (in `HeroSpace`) of the list covers that can grow into the detail
 /// card, keyed by hero id. Rows publish their own; `HomeView` reads them all
 /// for the `track-demo` scene's fingertip.
@@ -188,7 +212,7 @@ struct TrackDetailOverlay: View {
             .opacity(expanded ? 1 - dragProgress : 0)
             // Stepped in screenshot mode: see HomeView's library layer.
             .animation(
-                ScreenshotMode.isActive ? nil : (expanded ? .easeOut(duration: 0.4) : .easeIn(duration: 0.3)),
+                ScreenshotMode.isActive ? nil : (expanded ? .easeOut(duration: 0.45) : .easeIn(duration: 0.3)),
                 value: expanded
             )
             .ignoresSafeArea()
@@ -222,7 +246,7 @@ struct TrackDetailOverlay: View {
             guard !expanded else { return }
             TrackDetailHaptics.snap.prepare()
             DispatchQueue.main.async {
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.84)) {
+                withAnimation(TrackDetailMotion.open) {
                     expanded = true
                 }
             }
@@ -242,9 +266,13 @@ struct TrackDetailOverlay: View {
     // MARK: Card
 
     private var card: some View {
+        // The surface rises and swells into place on the hero's spring,
+        // and the chrome cascades in behind the cover, top to bottom. Only
+        // the background and the individual pieces move — the layout stays
+        // put so the cover slot the hero flies to never shifts mid-flight.
         VStack(spacing: 24) {
             heading
-                .chrome(expanded)
+                .reveal(expanded, delay: TrackDetailMotion.headingDelay)
 
             coverSlot
 
@@ -255,14 +283,14 @@ struct TrackDetailOverlay: View {
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
                     .frame(maxWidth: .infinity)
-                    .chrome(expanded)
+                    .reveal(expanded, delay: TrackDetailMotion.scrubberDelay)
             }
 
             scrubber
-                .chrome(expanded)
+                .reveal(expanded, delay: TrackDetailMotion.scrubberDelay)
 
             transport
-                .chrome(expanded)
+                .reveal(expanded, delay: TrackDetailMotion.transportDelay)
         }
         .padding(.horizontal, 24)
         .padding(.top, 32)
@@ -271,7 +299,7 @@ struct TrackDetailOverlay: View {
         .background(
             RoundedRectangle(cornerRadius: cardCorner, style: .continuous)
                 .fill(surface)
-                .chrome(expanded)
+                .reveal(expanded, rise: 28, scale: 0.96)
         )
         .overlay(alignment: .topTrailing) {
             if current.owner == true {
@@ -289,7 +317,7 @@ struct TrackDetailOverlay: View {
                         .contentShape(Rectangle())
                 }
                 .padding(8)
-                .chrome(expanded)
+                .reveal(expanded, delay: TrackDetailMotion.transportDelay, rise: 0)
             }
         }
     }
@@ -322,12 +350,7 @@ struct TrackDetailOverlay: View {
             .clipShape(RoundedRectangle(cornerRadius: expanded ? 28 : 8 / scale, style: .continuous))
             .scaleEffect(scale)
             .position(x: target.midX, y: expanded ? target.midY : target.midY - dragOffset)
-            .animation(
-                expanded
-                    ? .spring(response: 0.45, dampingFraction: 0.84)
-                    : .spring(response: 0.4, dampingFraction: 0.86),
-                value: expanded
-            )
+            .animation(expanded ? TrackDetailMotion.open : TrackDetailMotion.close, value: expanded)
             .allowsHitTesting(false)
     }
 
@@ -437,7 +460,9 @@ struct TrackDetailOverlay: View {
     // MARK: Pills
 
     /// Share + loop in one pill on the left, Edit on the right, floating
-    /// under the card on the same surface.
+    /// under the card on the same surface. They land last: each rises from
+    /// below its resting spot and swells up, left a beat before right, and
+    /// drops away first on dismiss.
     private var pills: some View {
         HStack(spacing: 12) {
             HStack(spacing: 0) {
@@ -468,6 +493,7 @@ struct TrackDetailOverlay: View {
             }
             .padding(.horizontal, 8)
             .background(Capsule().fill(surface))
+            .reveal(expanded, delay: TrackDetailMotion.leftPillDelay, rise: 44, scale: 0.86)
 
             Spacer(minLength: 0)
 
@@ -486,9 +512,9 @@ struct TrackDetailOverlay: View {
                 .buttonStyle(.plain)
                 .disabled(playbackBlocked)
                 .opacity(playbackBlocked ? 0.4 : 1)
+                .reveal(expanded, delay: TrackDetailMotion.rightPillDelay, rise: 44, scale: 0.86)
             }
         }
-        .chrome(expanded)
     }
 
     // MARK: Dismissal
@@ -520,28 +546,42 @@ struct TrackDetailOverlay: View {
         guard !dismissing else { return }
         dismissing = true
         TrackDetailHaptics.snap.impactOccurred(intensity: 0.7)
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) {
+        withAnimation(TrackDetailMotion.close) {
             expanded = false
         }
         // No animation-completion hook before iOS 17: remove the overlay
         // once the fly-back has settled.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.settle) {
             onDismiss()
         }
     }
 }
 
-private extension View {
-    /// Card chrome fades in a beat after the cover starts flying, and out
-    /// ahead of it on the way back, so the hero reads as the one solid
-    /// element throughout.
-    func chrome(_ expanded: Bool) -> some View {
-        opacity(expanded ? 1 : 0)
+/// How a piece of the card arrives and leaves. In: fades up from `rise`
+/// points below (and from `scale`, anchored at its bottom edge) on the
+/// hero's spring, after `delay` — so the chrome cascades in behind the
+/// cover and the pills land last. Out: the reverse, quick and undelayed,
+/// so everything is gone before the cover reaches its row.
+private struct Reveal: ViewModifier {
+    let expanded: Bool
+    let delay: Double
+    let rise: CGFloat
+    let scale: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(expanded ? 1 : 0)
+            .scaleEffect(expanded ? 1 : scale, anchor: .bottom)
+            .offset(y: expanded ? 0 : rise)
             .animation(
-                expanded
-                    ? .easeOut(duration: 0.3).delay(0.08)
-                    : .easeIn(duration: 0.2),
+                expanded ? TrackDetailMotion.open.delay(delay) : TrackDetailMotion.exit,
                 value: expanded
             )
+    }
+}
+
+private extension View {
+    func reveal(_ expanded: Bool, delay: Double = 0, rise: CGFloat = 16, scale: CGFloat = 1) -> some View {
+        modifier(Reveal(expanded: expanded, delay: delay, rise: rise, scale: scale))
     }
 }

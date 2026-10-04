@@ -62,6 +62,9 @@ struct HomeView: View {
     /// otherwise.
     @State private var demoFinger: DemoFinger?
     @State private var demoCoverFrames: [String: CGRect] = [:]
+    /// `track-demo`: the detail card is pre-rendered invisibly until the
+    /// demo starts (see the warm-up in `body`).
+    @State private var demoWarming = ScreenshotMode.scene?.animatesDetails == true
 
     var body: some View {
         GeometryReader { geometry in
@@ -112,7 +115,9 @@ struct HomeView: View {
                     .animation(nil, value: heroExpanded)
                     .scaleEffect(heroExpanded ? 0.94 : 1)
                     .animation(
-                        ScreenshotMode.isActive ? nil : .spring(response: 0.45, dampingFraction: 0.84),
+                        ScreenshotMode.isActive
+                            ? nil
+                            : (heroExpanded ? TrackDetailMotion.open : TrackDetailMotion.close),
                         value: heroExpanded
                     )
 
@@ -127,6 +132,24 @@ struct HomeView: View {
                     // The overlay animates itself in (hero + chrome fade)
                     // and has already animated out by the time it's removed.
                     .transition(.identity)
+                    .zIndex(1)
+                }
+
+                if demoWarming, let track = ScreenshotFixtures.library.first {
+                    // `track-demo` only: the card mounted invisibly for the
+                    // first moments so its material, fonts and symbols are
+                    // rendered once before the recorded open. Without it
+                    // the first open stalls the CI simulator's software
+                    // renderer and the flight is skipped.
+                    TrackDetailOverlay(
+                        selection: TrackDetailSelection(track: track, heroID: "warm-up"),
+                        player: model.player,
+                        expanded: .constant(true),
+                        safeArea: geometry.safeAreaInsets,
+                        onDismiss: {}
+                    )
+                    .opacity(0.01)
+                    .allowsHitTesting(false)
                     .zIndex(1)
                 }
 
@@ -425,8 +448,11 @@ struct HomeView: View {
         guard let track = ScreenshotFixtures.library.first else { return }
         let heroID = TrackDetailSelection.heroID(list: "library", track: track)
 
-        // Let the launch settle and the library read as the starting point.
-        await demoPause(1.6)
+        // Let the launch settle (the invisible card warms the renderer
+        // meanwhile) and the library read as the starting point.
+        await demoPause(0.9)
+        demoWarming = false
+        await demoPause(0.7)
 
         for _ in 0..<2 {
             // Tap the cover.
@@ -446,10 +472,10 @@ struct HomeView: View {
             demoTouch(.backdrop)
             await demoPause(0.4)
             demoTouch(nil)
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) {
+            withAnimation(TrackDetailMotion.close) {
                 heroExpanded = false
             }
-            await demoPause(0.45)
+            await demoPause(TrackDetailMotion.settle)
             detail = nil
 
             await demoPause(1.8)
