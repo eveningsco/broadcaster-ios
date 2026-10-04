@@ -74,6 +74,9 @@ struct AccountSheet: View {
             }
         }
         .presentationDetents([.medium])
+        // Opaque: the system's translucent sheet lets the go-live circle
+        // and the list rows bleed through behind the title.
+        .presentationBackground(Color(.secondarySystemBackground))
     }
 }
 

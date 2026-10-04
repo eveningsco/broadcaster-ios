@@ -177,9 +177,14 @@ struct HomeView: View {
                     HStack(spacing: 16) {
                         cardTabTitle("Library", tab: .library)
                         cardTabTitle("Explore", tab: .explore)
-                        Spacer()
-                        AccountButton { showingAccount = true }
-                        LoopButton(player: model.player)
+                        Spacer(minLength: 0)
+                        // Both icons carry 44pt hit targets, so they sit
+                        // flush; the header is only a few points wider than
+                        // its content and a 16pt gap here wrapped "Library".
+                        HStack(spacing: 0) {
+                            AccountButton { showingAccount = true }
+                            LoopButton(player: model.player)
+                        }
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, safeArea.top + 24)
@@ -267,6 +272,8 @@ struct HomeView: View {
             Text(label)
                 .font(.custom("ETBembo-SemiBoldOSF", size: 34))
                 .foregroundStyle(cardTab == tab ? Color.primary : Color(.systemGray2))
+                .lineLimit(1)
+                .fixedSize()
         }
         .buttonStyle(.plain)
     }
