@@ -86,7 +86,7 @@ captures every screen to a PNG artifact.
 ```sh
 # From any machine with python3 and a GitHub token with `repo` scope:
 GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch
-# → screenshots/{login,signup,library,explore,stage,live}.png
+# → screenshots/{login,signup,library,explore,edit,stage,live}.png
 ```
 
 > **Setup (once):** GitHub only knows about a `workflow_dispatch`-only
@@ -115,7 +115,8 @@ The app supports a debug-only **screenshot mode** that makes this possible:
 launching with `-screenshot <scene>` renders that scene from fixture data
 (`Sources/Debug/ScreenshotMode.swift`) with no account, network, Keychain or
 microphone involved. Scenes: `login`, `signup` (account creation), `library`,
-`explore`, `stage` (idle, "Go Live") and `live` (on air, timer). On a Mac:
+`explore`, `edit` (the trim + tempo audio editor over the library), `stage`
+(idle, "Go Live") and `live` (on air, timer). On a Mac:
 
 ```sh
 xcodegen generate

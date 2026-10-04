@@ -21,6 +21,8 @@ enum ScreenshotMode {
         case library
         /// Home with the Explore tab (live channels + recent tracks).
         case explore
+        /// The audio editor (trim + tempo) sheet over the library.
+        case edit
         /// The stage revealed, idle (mic check, "Go Live").
         case stage
         /// The stage on air: LIVE badge and elapsed timer.
@@ -61,6 +63,23 @@ enum ScreenshotFixtures {
 
     /// Reads 02:13 on the stage timer at capture time.
     static let liveSince = Date().addingTimeInterval(-130)
+
+    /// The `edit` scene: a selection with both ends moved, the wheel off
+    /// its detent, and the playhead mid-loop, so every readout has a value.
+    static let editSelection: ClosedRange<Double> = 0.12...0.78
+    static let editRate = 0.92
+    static let editPlayhead = 0.41
+    /// 56 bars of plausible set dynamics from a fixed-seed LCG — the real
+    /// editor decodes these from the stream, which screenshot mode has none of.
+    static let editWaveform: [Float] = {
+        var seed: UInt32 = 0x2545_F491
+        return (0..<56).map { index in
+            seed = seed &* 1_664_525 &+ 1_013_904_223
+            let noise = Float(seed >> 8) / Float(1 << 24)
+            let swell = 0.55 + 0.35 * sin(Double(index) / 56 * .pi * 3)
+            return Float(min(1, max(0.12, swell * Double(0.6 + 0.4 * noise))))
+        }
+    }()
 
     static let library: [LibraryTrack] = [
         track(101, "Late Shift — Episode 48", streamedAt: "2026-10-02T21:00:00.000Z",

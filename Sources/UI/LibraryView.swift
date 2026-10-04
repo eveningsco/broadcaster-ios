@@ -21,8 +21,9 @@ struct LibraryListView: View {
     @Binding var listAtTop: Bool
     @State private var trackPendingDelete: LibraryTrack?
     @State private var trackToEdit: LibraryTrack?
-    @State private var trackToRetempo: LibraryTrack?
-    @State private var trackToTrim: LibraryTrack?
+    /// Screenshot mode's `edit` scene opens the editor on the first track.
+    @State private var trackToEditAudio: LibraryTrack? =
+        ScreenshotMode.scene == .edit ? ScreenshotFixtures.library.first : nil
     @State private var draftPendingDelete: Draft?
 
     private var trimmedQuery: String {
@@ -148,17 +149,14 @@ struct LibraryListView: View {
                         track: track,
                         isPlaying: model.player.playingKey == TrackPlayer.key(for: track),
                         onEdit: track.owner == true ? { trackToEdit = track } : nil,
-                        // Editing is open to saved tracks from other stations
-                        // too — the result uploads as your own private track
-                        // (a remix), leaving the original untouched.
-                        onTempo: track.audioURL != nil ? {
+                        // Audio editing (trim + tempo) is open to saved
+                        // tracks from other stations too — the result
+                        // uploads as your own private track (a remix),
+                        // leaving the original untouched.
+                        onEditAudio: track.audioURL != nil ? {
                             // The mic owns the audio session while broadcasting.
                             guard !model.broadcast.state.isActive else { return }
-                            trackToRetempo = track
-                        } : nil,
-                        onTrim: track.audioURL != nil ? {
-                            guard !model.broadcast.state.isActive else { return }
-                            trackToTrim = track
+                            trackToEditAudio = track
                         } : nil,
                         onDelete: track.owner == true ? { trackPendingDelete = track } : nil,
                         onRemove: track.owner != true ? { remove(track) } : nil,
@@ -216,11 +214,8 @@ struct LibraryListView: View {
         .sheet(item: $trackToEdit) { track in
             EditTrackSheet(track: track)
         }
-        .sheet(item: $trackToRetempo) { track in
-            TempoEditSheet(track: track)
-        }
-        .sheet(item: $trackToTrim) { track in
-            TrimEditSheet(track: track)
+        .sheet(item: $trackToEditAudio) { track in
+            AudioEditSheet(track: track)
         }
     }
 
@@ -262,8 +257,7 @@ struct TrackRow: View {
     var showsTags = false
     var showsListens = true
     var onEdit: (() -> Void)?
-    var onTempo: (() -> Void)?
-    var onTrim: (() -> Void)?
+    var onEditAudio: (() -> Void)?
     var onDelete: (() -> Void)?
     var onSave: (() -> Void)?
     var onRemove: (() -> Void)?
@@ -288,7 +282,7 @@ struct TrackRow: View {
                 }
             }
             Spacer()
-            if onEdit != nil || onTempo != nil || onTrim != nil || onDelete != nil || onSave != nil || onRemove != nil || onShare != nil {
+            if onEdit != nil || onEditAudio != nil || onDelete != nil || onSave != nil || onRemove != nil || onShare != nil {
                 Menu {
                     if let onSave {
                         Button(action: onSave) {
@@ -305,14 +299,9 @@ struct TrackRow: View {
                             Label("Edit Details", systemImage: "pencil")
                         }
                     }
-                    if let onTempo {
-                        Button(action: onTempo) {
-                            Label("Adjust Tempo", systemImage: "speedometer")
-                        }
-                    }
-                    if let onTrim {
-                        Button(action: onTrim) {
-                            Label("Trim", systemImage: "scissors")
+                    if let onEditAudio {
+                        Button(action: onEditAudio) {
+                            Label("Edit Audio", systemImage: "waveform")
                         }
                     }
                     if let onRemove {

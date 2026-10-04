@@ -18,7 +18,7 @@ set -euo pipefail
 APP=${1:?usage: $0 <Evenings.app> <output dir>}
 OUT=${2:?usage: $0 <Evenings.app> <output dir>}
 DEVICE=${DEVICE:-iPhone 16 Pro}
-SCENES=${SCENES:-login signup library explore stage live}
+SCENES=${SCENES:-login signup library explore edit stage live}
 APPEARANCE=${APPEARANCE:-dark}
 SETTLE=${SETTLE:-4}
 BUNDLE_ID=co.evenings.EveningsBroadcaster
