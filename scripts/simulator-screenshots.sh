@@ -113,15 +113,29 @@ for appearance in $appearances; do
     fi
     case "$scene" in
       *-demo)
-        # Start the recorder first so the sheet's presentation is in the
-        # clip; it finalises the file on SIGINT.
-        xcrun simctl io "$udid" recordVideo --codec h264 --force "$base.mov" &
+        # Start the recorder first and launch only once it reports
+        # "Recording started": on GitHub's virtualised runners that takes
+        # ~18 s, long enough for the whole demo to play unrecorded. It
+        # finalises the file on SIGINT.
+        xcrun simctl io "$udid" recordVideo --codec h264 --force "$base.mov" \
+          > "$base.recorder.log" 2>&1 &
         recorder=$!
-        sleep 1
+        for _ in $(seq 1 240); do
+          grep -q "Recording started" "$base.recorder.log" 2>/dev/null && break
+          kill -0 "$recorder" 2>/dev/null || break
+          sleep 0.5
+        done
+        if ! grep -q "Recording started" "$base.recorder.log"; then
+          echo "recorder never started for $scene:" >&2
+          cat "$base.recorder.log" >&2
+          exit 1
+        fi
         xcrun simctl launch "$udid" "$BUNDLE_ID" -screenshot "$scene" >/dev/null
         sleep "$VIDEO_SECONDS"
         kill -INT "$recorder"
         wait "$recorder" || true
+        cat "$base.recorder.log"
+        rm -f "$base.recorder.log"
         [ -s "$base.mov" ] || { echo "recording $scene produced no file" >&2; exit 1; }
         echo "recorded $base.mov"
         to_apng "$base.mov" "$base.png"
