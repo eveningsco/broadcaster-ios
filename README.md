@@ -84,10 +84,12 @@ GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch --appearance both
 # → screenshots/{login,library,explore,stage,live}-{light,dark}.png
 ```
 
-> **Setup (once):** the workflow definition lives at
-> `scripts/ci/simulator-screenshots.yml` until a human moves it to
-> `.github/workflows/` — pushing workflow files needs a token with the
-> `workflow` scope, which the forum agent's token lacks.
+> **Setup (once):** GitHub only knows about a `workflow_dispatch`-only
+> workflow once its file exists on the **default branch** (`main`) — until
+> then, dispatching by file name returns `404 Not Found` from the API and the
+> workflow is missing from the Actions tab. Land
+> `.github/workflows/simulator-screenshots.yml` on `main` once; after that
+> `--ref` can point at any branch that has the file.
 
 Or trigger it by hand (Actions → Simulator Screenshots → Run workflow) and
 download the `simulator-screenshots` artifact. A cold run takes ~8–12 minutes

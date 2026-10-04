@@ -75,10 +75,18 @@ def main():
     args = p.parse_args()
 
     started = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=5)
-    request(f"/actions/workflows/{WORKFLOW}/dispatches", "POST", {
-        "ref": args.ref,
-        "inputs": {"scenes": args.scenes, "device": args.device, "appearance": args.appearance},
-    })
+    try:
+        request(f"/actions/workflows/{WORKFLOW}/dispatches", "POST", {
+            "ref": args.ref,
+            "inputs": {"scenes": args.scenes, "device": args.device, "appearance": args.appearance},
+        })
+    except SystemExit as e:
+        if "-> 404" in str(e):
+            sys.exit(f"{e}\n\nGitHub returned 404 for the dispatch. A dispatch-only workflow is only "
+                     f"registered once its file exists on the repo's default branch; "
+                     f"land .github/workflows/{WORKFLOW} on main (one commit, just that file), "
+                     f"then re-run with --ref {args.ref}.")
+        raise
     print(f"dispatched {WORKFLOW} on {args.ref}; waiting for the run to appear…")
 
     run = None
