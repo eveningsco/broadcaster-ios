@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Sign-in, dressed like the library card it hands off to: the ET Bembo
 /// wordmark, ABC Social body text, soft fills for the fields (same as the
-/// library's search field), and the brand-red circle and primary button.
+/// library's search field), and the Evenings logo and primary button.
 /// Shares its chrome with SignUpView via AuthComponents; "Create an account"
 /// pushes that screen onto the stack.
 struct LoginView: View {

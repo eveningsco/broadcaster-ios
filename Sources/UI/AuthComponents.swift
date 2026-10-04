@@ -1,20 +1,25 @@
 import SwiftUI
 
 /// Pieces shared by the sign-in and sign-up screens so the two read as one
-/// surface: the brand-red circle and ET Bembo wordmark, the library-style
+/// surface: the Evenings starburst and ET Bembo wordmark, the library-style
 /// soft-fill fields, and the primary button that turns brand red once it
 /// can be pressed.
 
-/// The go-live circle from the home screen doubling as the mark, over the
-/// wordmark and a one-line subtitle.
+/// The Evenings starburst (the website's logo, `sol-logo.svg` in
+/// sol-frontend) over the wordmark and a one-line subtitle. The asset is a
+/// template so it takes the label colour — white in the dark-only app, the
+/// same as it renders on evenings.fm.
 struct AuthHeader: View {
     let subtitle: String
 
     var body: some View {
         VStack(spacing: 0) {
-            Circle()
-                .fill(Color.eveningsRed)
-                .frame(width: 56, height: 56)
+            Image("EveningsLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 96)
+                .foregroundStyle(.primary)
+                .accessibilityLabel("Evenings")
                 .padding(.bottom, 28)
 
             Text("Evenings")
