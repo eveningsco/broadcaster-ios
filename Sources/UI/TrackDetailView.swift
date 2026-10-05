@@ -668,6 +668,13 @@ struct TrackDetailOverlay: View {
             }
             if ScreenshotMode.pagesDetails {
                 pagingProbes(inHeroes: true)
+                // Round 3: the real hero's chain and inputs, artwork swapped
+                // for a white rectangle, drawn over the real covers.
+                ForEach(pages) { page in
+                    hero(for: page, probe: true)
+                        .transition(.identity)
+                }
+                heroInputsReadout
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -723,7 +730,7 @@ struct TrackDetailOverlay: View {
     /// has always animated, so the shift gets the same treatment: an
     /// explicit animation that fires when the shift changes — nil while
     /// the finger is down (1:1), the page spring on commit.
-    private func hero(for page: Page) -> some View {
+    private func hero(for page: Page, probe: Bool = false) -> some View {
         let track = page.track
         let slot = slotFrames[track.id]
             ?? CGRect(x: (stripFrame.width - 250) / 2, y: 0, width: 250, height: 250)
@@ -741,7 +748,13 @@ struct TrackDetailOverlay: View {
         let flies = isCurrent && !expanded
         let target = flies ? (hasSource ? source : shrunk) : slotFrame
         let scale = target.width / slot.width
-        return TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 56))
+        return ZStack {
+            if probe {
+                Rectangle().fill(Color.white.opacity(0.9))
+            } else {
+                TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 56))
+            }
+        }
             .frame(width: slot.width, height: slot.height)
             .clipShape(RoundedRectangle(cornerRadius: flies ? 8 / scale : 28, style: .continuous))
             .scaleEffect(scale)
@@ -818,6 +831,21 @@ struct TrackDetailOverlay: View {
             }
         }
         .allowsHitTesting(false)
+    }
+
+    /// DIAGNOSTIC (`page-demo`): the current hero's inputs as text, so a
+    /// recording shows whether any of them move during a swipe.
+    private var heroInputsReadout: some View {
+        let slot = slotFrames[current.id] ?? .zero
+        let height = pageHeights[current.id] ?? -1
+        let text = "s \(Int(slot.minX)),\(Int(slot.minY)),\(Int(slot.width))  st \(Int(stripFrame.minX)),\(Int(stripFrame.minY)),\(Int(stripFrame.maxY)),\(Int(stripFrame.width))  h \(Int(height))  d \(Int(pageDrag))  src \(Int(selection.sourceFrame.minX)),\(Int(selection.sourceFrame.minY))  e \(expanded ? 1 : 0)"
+        return Text(text)
+            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+            .frame(width: 280, alignment: .leading)
+            .position(x: 150, y: 95)
     }
 
     // MARK: Chrome
