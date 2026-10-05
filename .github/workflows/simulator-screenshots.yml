@@ -10,7 +10,8 @@
 #
 # Builds the app for the iOS Simulator on a macOS runner and captures each
 # screenshot-mode scene (Sources/Debug/ScreenshotMode.swift) as a PNG
-# artifact. Manual only: macOS minutes bill at 10x Linux on private repos.
+# artifact; `-demo` scenes are recorded (animated PNG + .mov). Manual only:
+# macOS minutes bill at 10x Linux on private repos.
 #
 #   scripts/ci-screenshots.py            # trigger, wait, download (needs GH_TOKEN)
 #   gh workflow run simulator-screenshots.yml --ref <branch>
@@ -20,16 +21,16 @@ on:
   workflow_dispatch:
     inputs:
       scenes:
-        description: "Scenes to capture (space-separated: login library explore stage live)"
-        default: "login library explore stage live"
+        description: "Scenes to capture (space-separated: login signup library explore account edit track stage live; edit-demo and track-demo record videos)"
+        default: "login signup library explore account edit track stage live"
       device:
         description: "Simulator device name"
         default: "iPhone 16 Pro"
       appearance:
-        description: "System appearance"
+        description: "System appearance (the app forces dark; light renders identically)"
         type: choice
         options: [light, dark, both]
-        default: light
+        default: dark
 
 jobs:
   screenshots:
@@ -38,24 +39,61 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Swift packages
-        uses: actions/cache@v4
+      # Same pick as the job script's default; part of the cache key so a new
+      # Xcode on the runner image starts a fresh cache instead of a stale one.
+      - name: Pick Xcode
+        id: xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          echo "path=$XCODE" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "${XCODE:-default}" .app)" >> "$GITHUB_OUTPUT"
+
+      # Restores the whole DerivedData (resolved Swift packages *and* compiled
+      # products), so HaishinKit isn't recompiled every run. The app's own
+      # sources still rebuild (checkout gives them fresh mtimes), but that's
+      # the small part. Exact hit when project.yml and Sources/ are unchanged
+      # (re-runs for other scenes); otherwise the newest cache from this
+      # branch or main is the warm start.
+      - name: Restore build cache
+        id: build-cache
+        uses: actions/cache/restore@v4
         with:
-          path: build/DerivedData/SourcePackages
-          key: spm-${{ runner.os }}-${{ hashFiles('project.yml') }}
+          path: |
+            build/DerivedData
+            !build/DerivedData/Logs
+            !build/DerivedData/Index.noindex
+          key: deriveddata-${{ runner.os }}-${{ steps.xcode.outputs.name }}-${{ hashFiles('project.yml') }}-${{ hashFiles('Sources/**') }}
+          restore-keys: |
+            deriveddata-${{ runner.os }}-${{ steps.xcode.outputs.name }}-${{ hashFiles('project.yml') }}-
+            deriveddata-${{ runner.os }}-${{ steps.xcode.outputs.name }}-
 
       - name: Build and capture
         env:
+          XCODE: ${{ steps.xcode.outputs.path }}
           DEVICE: ${{ inputs.device }}
           SCENES: ${{ inputs.scenes }}
           APPEARANCE: ${{ inputs.appearance }}
           OUT: screenshots
         run: scripts/ci/simulator-screenshots-job.sh
 
+      # Saved as soon as the build succeeds, even if capturing fails, and
+      # skipped on an exact hit (the cache already holds this build).
+      - name: Save build cache
+        if: always() && steps.build-cache.outputs.cache-hit != 'true' && hashFiles('build/.build-succeeded') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/DerivedData
+            !build/DerivedData/Logs
+            !build/DerivedData/Index.noindex
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+
       - uses: actions/upload-artifact@v4
         with:
           name: simulator-screenshots
-          path: screenshots/*.png
+          path: |
+            screenshots/*.png
+            screenshots/*.mov
           if-no-files-found: error
 
       - name: Upload build log

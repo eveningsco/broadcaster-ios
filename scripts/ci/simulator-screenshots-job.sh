@@ -36,7 +36,9 @@ fi
 xcodebuild -version
 xcrun simctl list runtimes | grep -E '^iOS' || true
 
-command -v xcodegen >/dev/null || brew install xcodegen
+# Skip Homebrew's self-update (often a minute+) when XcodeGen isn't preinstalled.
+command -v xcodegen >/dev/null ||
+  HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install xcodegen
 xcodegen generate
 
 # --- Build -------------------------------------------------------------------
@@ -49,12 +51,15 @@ xcodebuild build \
   -destination 'generic/platform=iOS Simulator' \
   -derivedDataPath build/DerivedData \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+  COMPILER_INDEX_STORE_ENABLE=NO \
   2>&1 | tee build/xcodebuild.log | grep -E 'error:|warning: .*(deprecated|unused)|\*\* BUILD' 
 set -e
 if ! grep -q '\*\* BUILD SUCCEEDED \*\*' build/xcodebuild.log; then
   echo "::error::xcodebuild failed; see the xcodebuild-log artifact" >&2
   exit 1
 fi
+# Tells the workflow's "Save build cache" step that DerivedData is worth keeping.
+touch build/.build-succeeded
 
 # --- Capture -----------------------------------------------------------------
 scripts/simulator-screenshots.sh \
