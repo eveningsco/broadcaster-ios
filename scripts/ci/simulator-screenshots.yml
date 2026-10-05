@@ -16,6 +16,9 @@
 #   scripts/ci-screenshots.py            # trigger, wait, download (needs GH_TOKEN)
 #   gh workflow run simulator-screenshots.yml --ref <branch>
 name: Simulator Screenshots
+# scripts/ci-screenshots.py reads this title back to know which scenes a past
+# run covered (for reuse and for picking scenes automatically). Keep the format.
+run-name: "Screenshots: ${{ inputs.scenes }} · ${{ inputs.appearance }} · ${{ inputs.device }}"
 
 on:
   workflow_dispatch:
@@ -31,6 +34,14 @@ on:
         type: choice
         options: [light, dark, both]
         default: dark
+
+# One run per branch at a time. A run dispatched while another is in flight
+# waits; dispatching again while one is waiting replaces the waiting one, so a
+# burst of dispatches collapses into at most one follow-up run. (The trigger
+# script already avoids this; this is the backstop for `gh workflow run`.)
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   screenshots:
