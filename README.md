@@ -187,3 +187,9 @@ reference captures and `docs/videos/` reference recordings
 - Local file streaming (document picker)
 - App-audio capture (ReplayKit broadcast upload extension)
 - RTMPS (needs server-side TLS termination first)
+
+## License
+
+Licensed under the [MIT License](LICENSE). The license covers the source code
+only: it does not grant rights to the Evenings name, logo or app icon, and the
+bundled commercial fonts are used under their own separate licenses.
