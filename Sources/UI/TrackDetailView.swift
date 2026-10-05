@@ -229,6 +229,11 @@ struct TrackDetailOverlay: View {
     /// natural height; together they place the heroes.
     @State private var slotFrames: [Int: CGRect] = [:]
     @State private var pageHeights: [Int: CGFloat] = [:]
+    /// How the heroes' sideways shift animates: nil while a finger drives
+    /// it, the page spring on commit, `snapBack` on a released drag that
+    /// didn't commit. Set before each write to `pageDrag` / the current
+    /// track; see `hero(for:)` for why the heroes need their own.
+    @State private var pageAnimation: Animation? = TrackDetailMotion.page
     /// `page-demo` only: the ghost fingertip's position (card space)
     /// while it swipes the strip; nil when lifted.
     @State private var demoFinger: CGPoint?
@@ -642,16 +647,19 @@ struct TrackDetailOverlay: View {
     /// go. With no row to land on (paged to a track whose row is off
     /// screen) the cover shrinks and fades in place instead.
     ///
-    /// The page shift is applied *outside* the `expanded` value animation,
-    /// as a separate `.offset`. `.animation(_:value:)` animates its
-    /// subtree only when its value changes — everything else under it
-    /// renders un-animated — so with the shift folded into `.position`
-    /// the covers ignored the drag and the `page(to:)` spring: they
-    /// jumped to the finger's end point as the swipe began and snapped
-    /// to centre at commit while the text under them was still sliding
-    /// (osebo, 2026-10-05). Out here the offset rides the gesture 1:1 and
-    /// the `withAnimation(TrackDetailMotion.page)` transaction, like the
-    /// strip's own offset does.
+    /// The page shift is a separate `.offset` with its own value-keyed
+    /// animation (`pageAnimation`, keyed on the shift itself). The hero
+    /// does not pick up the `withAnimation` transactions that move the
+    /// strip's text: with the shift folded into `.position` under the
+    /// `expanded` animation, and again with it as an un-keyed `.offset`
+    /// outside that modifier, the covers ignored both the drag tween and
+    /// the `page(to:)` spring — they jumped to the finger's end point as
+    /// the swipe began and snapped to centre at commit while the text was
+    /// still sliding (osebo, 2026-10-05; CI runs 37260289707 and
+    /// 37261598128, measured frame by frame). The `expanded`-keyed flight
+    /// has always animated, so the shift gets the same treatment: an
+    /// explicit animation that fires when the shift changes — nil while
+    /// the finger is down (1:1), the page spring on commit.
     private func hero(for page: Page) -> some View {
         let track = page.track
         let slot = slotFrames[track.id]
@@ -677,9 +685,10 @@ struct TrackDetailOverlay: View {
             .position(x: target.midX, y: flies ? target.midY - dragOffset : target.midY)
             .opacity(flies && !hasSource ? 0 : 1)
             .animation(expanded ? TrackDetailMotion.open : TrackDetailMotion.close, value: expanded)
-            // Paging shift: outside the value animation (see above). Zero
-            // for the current page at rest, so the fly-back is unaffected.
+            // Paging shift, self-animated (see above). Zero for the
+            // current page at rest, so the fly-back is unaffected.
             .offset(x: pageShift(page))
+            .animation(pageAnimation, value: pageShift(page))
     }
 
     // MARK: Chrome
@@ -873,6 +882,8 @@ struct TrackDetailOverlay: View {
                 case .horizontal:
                     let dx = translation.width
                     let hasNeighbour = dx < 0 ? nextTrack != nil : previousTrack != nil
+                    // The finger drives the covers directly.
+                    pageAnimation = nil
                     pageDrag = hasNeighbour ? dx : dx / 4
                 }
             }
@@ -900,6 +911,7 @@ struct TrackDetailOverlay: View {
                     } else if dx > 0, let previous = previousTrack, max(dx, predicted) > threshold {
                         page(to: previous)
                     } else {
+                        pageAnimation = TrackDetailMotion.snapBack
                         withAnimation(TrackDetailMotion.snapBack) {
                             pageDrag = 0
                         }
@@ -933,6 +945,9 @@ struct TrackDetailOverlay: View {
                 demoFinger = start
             }
             try? await Task.sleep(for: .seconds(PageDemoScript.touch))
+            // A finger would drive the covers directly; the scripted swipe
+            // tweens them on the same curve as the strip and the fingertip.
+            pageAnimation = .easeInOut(duration: PageDemoScript.swipe)
             withAnimation(.easeInOut(duration: PageDemoScript.swipe)) {
                 demoFinger = CGPoint(x: start.x + travel, y: fingerY)
                 pageDrag = travel
@@ -954,6 +969,7 @@ struct TrackDetailOverlay: View {
     private func page(to track: LibraryTrack) {
         TrackDetailHaptics.tap.impactOccurred()
         let heroID = TrackDetailSelection.heroID(list: selection.list, track: track)
+        pageAnimation = TrackDetailMotion.page
         withAnimation(TrackDetailMotion.page) {
             selection.track = track
             selection.sourceFrame = resolvedRowFrame(for: track, heroID: heroID) ?? .zero
