@@ -253,14 +253,12 @@ struct HomeView: View {
                 scrollLocked: listsLocked,
                 searchQuery: searchActive ? searchQuery : "",
                 listAtTop: $listAtTop,
-                detail: $detail,
-                heroExpanded: heroExpanded
+                detail: $detail
             )
             .frame(width: width)
             ExploreListView(
                 scrollLocked: listsLocked,
-                detail: $detail,
-                heroExpanded: heroExpanded
+                detail: $detail
             )
             .frame(width: width)
         }
