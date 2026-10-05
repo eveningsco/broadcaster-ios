@@ -53,10 +53,15 @@ struct HomeView: View {
     @State private var detail: TrackDetailSelection? =
         ScreenshotMode.scene?.opensDetails == true
             ? ScreenshotFixtures.library.first.map {
-                TrackDetailSelection(track: $0, heroID: TrackDetailSelection.heroID(list: "library", track: $0))
+                TrackDetailSelection(track: $0, list: .library)
             }
             : nil
     @State private var heroExpanded = ScreenshotMode.scene?.opensDetails == true
+    /// Resting frames of the list rows' covers and of the library card, for
+    /// the detail card's fly-back after it has paged to another track. A
+    /// plain reference, not SwiftUI state: it updates on every scroll
+    /// frame and must not re-render the home layer.
+    @State private var homeFrames = HomeFrames()
     /// Screenshot mode's `track-demo` scene: where the ghost fingertip is
     /// and the list covers' frames it taps (see `runTrackDemo`). Idle
     /// otherwise.
@@ -128,10 +133,18 @@ struct HomeView: View {
 
                 if let detail {
                     TrackDetailOverlay(
-                        selection: detail,
+                        // The card pages between tracks and writes the
+                        // current one back here, so the rows' hidden cover
+                        // follows it. Writes after dismissal are dropped
+                        // rather than re-opening the card.
+                        selection: Binding(
+                            get: { self.detail ?? detail },
+                            set: { if self.detail != nil { self.detail = $0 } }
+                        ),
                         player: model.player,
                         expanded: $heroExpanded,
                         safeArea: geometry.safeAreaInsets,
+                        rowFrame: { homeFrames.visibleRowFrame($0) },
                         onDismiss: { self.detail = nil }
                     )
                     // The overlay animates itself in (hero + chrome fade)
@@ -147,7 +160,7 @@ struct HomeView: View {
                     // the first open stalls the CI simulator's software
                     // renderer and the flight is skipped.
                     TrackDetailOverlay(
-                        selection: TrackDetailSelection(track: track, heroID: "warm-up"),
+                        selection: .constant(TrackDetailSelection(track: track, list: .library)),
                         player: model.player,
                         expanded: .constant(true),
                         safeArea: geometry.safeAreaInsets,
@@ -168,8 +181,16 @@ struct HomeView: View {
             .coordinateSpace(name: HeroSpace.name)
             .simultaneousGesture(swipeAway(width: width))
             .onPreferenceChange(CoverFramesKey.self) { frames in
-                guard ScreenshotMode.scene?.animatesDetails == true else { return }
-                demoCoverFrames = frames
+                // Resting frames only: while the detail card is up the home
+                // layer is scaled back to 0.94 and the frames come through
+                // that transform. Nothing scrolls under the card, so the
+                // last resting set is what the fly-back lands on.
+                if !heroExpanded {
+                    homeFrames.frames = frames
+                }
+                if ScreenshotMode.scene?.animatesDetails == true {
+                    demoCoverFrames = frames
+                }
             }
             .task {
                 guard ScreenshotMode.scene?.animatesDetails == true else { return }
@@ -304,6 +325,12 @@ struct HomeView: View {
                     )
                     .padding(.bottom, -48)
                 }
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: CoverFramesKey.self,
+                        value: [HomeFrames.headerKey: geometry.frame(in: .named(HeroSpace.name))]
+                    )
+                })
                 .contentShape(Rectangle())
                 // Pulling down on the header reveals the search field. The
                 // header sits outside the scroll view, so this doesn't fight
@@ -333,6 +360,12 @@ struct HomeView: View {
                 .allowsHitTesting(false)
             }
             .background(Color(.systemBackground))
+            .background(GeometryReader { geometry in
+                Color.clear.preference(
+                    key: CoverFramesKey.self,
+                    value: [HomeFrames.cardKey: geometry.frame(in: .named(HeroSpace.name))]
+                )
+            })
             // Full-bleed at the top; only the bottom corners are rounded so
             // the card looks anchored to the top of the screen.
             .clipShape(UnevenRoundedRectangle(
@@ -449,7 +482,7 @@ struct HomeView: View {
     @MainActor
     private func runTrackDemo() async {
         guard let track = ScreenshotFixtures.library.first else { return }
-        let heroID = TrackDetailSelection.heroID(list: "library", track: track)
+        let heroID = TrackDetailSelection.heroID(list: .library, track: track)
 
         // Let the launch settle (the invisible card warms the renderer
         // meanwhile) and the library read as the starting point.
@@ -465,7 +498,7 @@ struct HomeView: View {
             await demoPause(0.12)
             HomeHaptics.tap.impactOccurred()
             detail = TrackDetailSelection(
-                track: track, heroID: heroID, sourceFrame: demoCoverFrames[heroID] ?? .zero
+                track: track, list: .library, sourceFrame: demoCoverFrames[heroID] ?? .zero
             )
 
             // Hold the card open (the frost arrives once the hero settles).
@@ -789,5 +822,35 @@ struct PlayingWaveform: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: levels)
+    }
+}
+
+/// Resting frames (in `HeroSpace`) of the list rows' covers (by hero id)
+/// and of the library card and its header, as last published while the
+/// detail card was down. Read when the detail card dismisses after paging
+/// to another track: the cover flies back to that track's row only if the
+/// row is fully in view between the header's fade and the bottom fade;
+/// otherwise the card shrinks its cover away in place.
+final class HomeFrames {
+    static let cardKey = "home-card"
+    static let headerKey = "home-header"
+
+    var frames: [String: CGRect] = [:]
+
+    /// The band of the card where a row cover is fully visible: below the
+    /// header's gradient (which bleeds 48pt past the header) and above the
+    /// 56pt bottom fade. Nil until both frames have been measured.
+    var listViewport: CGRect? {
+        guard let card = frames[Self.cardKey], let header = frames[Self.headerKey],
+              card.height > 0 else { return nil }
+        let top = header.maxY + 48
+        let bottom = card.maxY - 56
+        guard bottom > top else { return nil }
+        return CGRect(x: card.minX, y: top, width: card.width, height: bottom - top)
+    }
+
+    func visibleRowFrame(_ heroID: String) -> CGRect? {
+        guard let frame = frames[heroID], frame.width > 0, let viewport = listViewport else { return nil }
+        return viewport.contains(frame) ? frame : nil
     }
 }
