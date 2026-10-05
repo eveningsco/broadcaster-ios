@@ -435,7 +435,13 @@ struct TrackDetailOverlay: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.openSettle) {
                     if self.expanded { heroClipped = true }
                 }
-                if ScreenshotMode.recordsDetails {
+                // Diagnostic (osebo's "thumbnails don't transition fluidly"):
+                // `page-demo` keeps the frost off for the whole recording.
+                // The covers stepped through four wirings while the strip's
+                // text tweened (runs 37260289707, 37261598128, 37262716674,
+                // 37263674915); the frost is the one thing that is on during
+                // paging and off during the (always animating) open flight.
+                if ScreenshotMode.recordsDetails && !ScreenshotMode.pagesDetails {
                     DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.settle) {
                         if self.expanded { frosted = true }
                     }
