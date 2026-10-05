@@ -110,7 +110,12 @@ private struct SlotFrameKey: PreferenceKey {
 ///
 /// Dismiss by dragging the card down (tracks the finger, rubber-banded
 /// upwards; release with momentum and the cover flies back into its row) or
-/// by tapping the backdrop.
+/// by tapping the backdrop. While dragging only cheap things change: the
+/// container's offset and the solid dim's opacity. The frosted material
+/// keeps a constant opacity until the drag commits — re-rendering a
+/// full-screen material at a new opacity every frame is what made the drag
+/// stutter (osebo, 2026-10-05), and a thinned frost also exposed the home
+/// layer's stepped un-blur as a pop on release.
 ///
 /// Playback goes through the shared `TrackPlayer`, so the home mini player,
 /// the lock screen and this card all show the same position.
@@ -196,8 +201,9 @@ struct TrackDetailOverlay: View {
     private let edge = Color.white.opacity(0.08)
     private let cardCorner: CGFloat = 40
 
-    /// How far along the drag-to-dismiss is (0 at rest, 1 at the commit
-    /// distance); thins the backdrop as the card goes.
+    /// How far along the drag-to-dismiss is (0 at rest, 0.6 well past the
+    /// commit distance); thins the backdrop's dim as the card goes. Only
+    /// the solid dim reads it — never the material (see `backdrop`).
     private var dragProgress: CGFloat {
         min(max(dragOffset / 400, 0), 0.6)
     }
@@ -217,33 +223,7 @@ struct TrackDetailOverlay: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Backdrop: frosted blur over the home layer with a light dim
-            // (the app is dark-only, so the material tints dark), tap to
-            // dismiss. Fades with the chrome and thins as the card is
-            // dragged, so the fly-back lands on a crisp library.
-            //
-            // Recorded (`track-demo`): the CI simulator software-renders a
-            // material over a moving layer so slowly that the whole flight
-            // would be skipped, so a plain dim tweens with the hero and the
-            // frost arrives only once everything below it has settled
-            // (`frosted`); it leaves instantly on dismiss.
-            ZStack {
-                if ScreenshotMode.recordsDetails {
-                    Color.black.opacity(0.55)
-                    Rectangle().fill(.ultraThinMaterial)
-                        .overlay(Color.black.opacity(0.2))
-                        .opacity(frosted ? 1 : 0)
-                        .animation(frosted ? Animation.easeOut(duration: 0.3) : nil, value: frosted)
-                } else {
-                    Rectangle().fill(.ultraThinMaterial)
-                    Color.black.opacity(0.2)
-                }
-            }
-            .opacity(expanded ? 1 - dragProgress : 0)
-            .animation(backdropAnimation, value: expanded)
-            .ignoresSafeArea()
-            .contentShape(Rectangle())
-            .onTapGesture { dismiss() }
+            backdrop
 
             // Card container: fills the hero space so its own coordinates
             // match it, and carries the drag offset for card and hero alike.
@@ -297,6 +277,43 @@ struct TrackDetailOverlay: View {
         .sheet(isPresented: $editingDetails) {
             EditTrackSheet(track: current)
         }
+    }
+
+    // MARK: Backdrop
+
+    /// Frosted blur over the home layer with a light dim (the app is
+    /// dark-only, so the material tints dark); tap to dismiss. Both fade
+    /// with the chrome on open/close. Only the solid dim thins while the
+    /// card is dragged: the material's opacity changes just twice per
+    /// presentation, never per frame, so the drag stays on the cheap
+    /// compositing path and the frost keeps hiding the home layer's
+    /// stepped un-blur until the drag commits.
+    ///
+    /// Recorded (`track-demo`): the CI simulator software-renders a
+    /// material over a moving layer so slowly that the whole flight would
+    /// be skipped, so a plain dim tweens with the hero and the frost
+    /// arrives only once everything below it has settled (`frosted`); it
+    /// leaves instantly on dismiss.
+    private var backdrop: some View {
+        ZStack {
+            if ScreenshotMode.recordsDetails {
+                Color.black.opacity(0.55)
+                    .opacity(expanded ? 1 : 0)
+                Rectangle().fill(.ultraThinMaterial)
+                    .overlay(Color.black.opacity(0.2))
+                    .opacity(frosted ? 1 : 0)
+                    .animation(frosted ? Animation.easeOut(duration: 0.3) : nil, value: frosted)
+            } else {
+                Rectangle().fill(.ultraThinMaterial)
+                    .opacity(expanded ? 1 : 0)
+                Color.black.opacity(0.2)
+                    .opacity(expanded ? 1 - dragProgress : 0)
+            }
+        }
+        .animation(backdropAnimation, value: expanded)
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture { dismiss() }
     }
 
     // MARK: Card
@@ -558,8 +575,11 @@ struct TrackDetailOverlay: View {
 
     /// Drag the card down to dismiss: follows the finger 1:1 downwards,
     /// quarter speed upwards; released with momentum past 140pt it goes.
+    /// Measured in global space: the card moves with the finger, so a
+    /// translation read in its own (moving) space would feed back on
+    /// itself.
     private var dragToDismiss: some Gesture {
-        DragGesture(minimumDistance: 12)
+        DragGesture(minimumDistance: 12, coordinateSpace: .global)
             .onChanged { value in
                 guard !dismissing, !isScrubbing else { return }
                 let dy = value.translation.height
