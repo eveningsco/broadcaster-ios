@@ -75,8 +75,8 @@ enum TrackDetailMotion {
     /// number that drifts when the spring is retuned. Removing the overlay
     /// early snapped the cover the last pixel or two (osebo, 2026-10-05).
     static let settle: TimeInterval = settlingTime(response: closeResponse, dampingFraction: closeDamping) * timeScale
-    /// When the open flight has landed (the heroes are clipped to the
-    /// card from then on; see `TrackDetailOverlay.heroes`).
+    /// When the open flight has landed (the page takes the cover over from
+    /// the hero from then on; see `TrackDetailOverlay.hero`).
     static let openSettle: TimeInterval = settlingTime(response: openResponse, dampingFraction: openDamping) * timeScale
 
     /// How long an underdamped spring takes to stay within `epsilon` of
@@ -231,14 +231,9 @@ struct TrackDetailOverlay: View {
     /// measured up from it.
     @State private var stripFrame: CGRect = .zero
     /// Each page's cover slot in that page's own space, and each page's
-    /// natural height; together they place the heroes.
+    /// natural height; together they place the hero.
     @State private var slotFrames: [Int: CGRect] = [:]
     @State private var pageHeights: [Int: CGFloat] = [:]
-    /// How the heroes' sideways shift animates: nil while a finger drives
-    /// it, the page spring on commit, `snapBack` on a released drag that
-    /// didn't commit. Set before each write to `pageDrag` / the current
-    /// track; see `hero(for:)` for why the heroes need their own.
-    @State private var pageAnimation: Animation? = TrackDetailMotion.page
     /// `page-demo` only: the ghost fingertip's position (card space)
     /// while it swipes the strip; nil when lifted.
     @State private var demoFinger: CGPoint?
@@ -384,9 +379,10 @@ struct TrackDetailOverlay: View {
     /// Recorded demo only: whether the frosted backdrop is in (it follows
     /// the hero's settle rather than the flight; see `body`).
     @State private var frosted = false
-    /// Whether the heroes are clipped to the card (true once the open
-    /// flight has landed, false the instant a dismiss starts). See `heroes`.
-    @State private var heroClipped = false
+    /// Whether the card has landed: true once the open spring has settled,
+    /// false the instant a dismiss starts. While settled each page draws
+    /// its own cover in its slot and the flying hero is hidden; see `hero`.
+    @State private var settled = false
 
     private var backdropAnimation: Animation? {
         if ScreenshotMode.recordsDetails {
@@ -402,7 +398,7 @@ struct TrackDetailOverlay: View {
             backdrop
 
             // Card container: fills the hero space so its own coordinates
-            // match it, and carries the drag offset for card and heroes alike.
+            // match it, and carries the drag offset for card and hero alike.
             ZStack {
                 VStack(spacing: 12) {
                     card
@@ -414,11 +410,7 @@ struct TrackDetailOverlay: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .gesture(cardDrag)
 
-                heroes
-
-                if ScreenshotMode.pagesDetails {
-                    pagingProbes(inHeroes: false)
-                }
+                hero
 
                 if let demoFinger {
                     DemoFingertip()
@@ -436,22 +428,21 @@ struct TrackDetailOverlay: View {
         .allowsHitTesting(!dismissing)
         .onChange(of: expanded) { expanded in
             if expanded {
+                // Hand the cover over to the page once the flight has landed
+                // (not animated: the two draws are pixel-identical).
                 DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.openSettle) {
-                    if self.expanded && !ScreenshotMode.pagesDetails { heroClipped = true }
+                    if self.expanded { settled = true }
                 }
-                // Diagnostic (osebo's "thumbnails don't transition fluidly"):
-                // `page-demo` keeps the frost off for the whole recording.
-                // The covers stepped through four wirings while the strip's
-                // text tweened (runs 37260289707, 37261598128, 37262716674,
-                // 37263674915); the frost is the one thing that is on during
-                // paging and off during the (always animating) open flight.
+                // `page-demo` keeps the frost off for the whole recording:
+                // the CI simulator's software renderer stalls on a material
+                // over moving content and the clip stops showing motion.
                 if ScreenshotMode.recordsDetails && !ScreenshotMode.pagesDetails {
                     DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.settle) {
                         if self.expanded { frosted = true }
                     }
                 }
             } else {
-                heroClipped = false
+                settled = false
                 frosted = false
             }
         }
@@ -460,7 +451,7 @@ struct TrackDetailOverlay: View {
             // Screenshot mode arrives already expanded (posed). Otherwise
             // wait one runloop so the cover has been laid out at the row's
             // frame before it flies.
-            guard !expanded else { frosted = true; heroClipped = true; return }
+            guard !expanded else { frosted = true; settled = true; return }
             TrackDetailHaptics.snap.prepare()
             DispatchQueue.main.async {
                 withAnimation(TrackDetailMotion.open) {
@@ -529,7 +520,7 @@ struct TrackDetailOverlay: View {
         // The surface rises and swells into place on the hero's spring,
         // and the chrome cascades in behind the cover, top to bottom. Only
         // the background and the individual pieces move — the layout stays
-        // put so the cover slots the heroes fly to never shift mid-flight.
+        // put so the cover slot the hero flies to never shifts mid-flight.
         strip
             .padding(.top, stripTopInset)
             .padding(.bottom, stripBottomInset)
@@ -627,11 +618,21 @@ struct TrackDetailOverlay: View {
         .coordinateSpace(name: pageSpace(track))
     }
 
-    /// Where the cover goes in a page's layout; the hero draws over it.
+    /// The cover's place in a page's layout. Empty while the hero is in
+    /// flight (the hero draws over it); once the card has settled the page
+    /// draws the artwork itself, so paging moves it with the rest of the
+    /// page. Never animated in or out: the hand-off is pixel-identical.
     private func coverSlot(for track: LibraryTrack) -> some View {
-        Color.clear
+        ZStack {
+            if settled {
+                TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 56))
+                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    .transition(.identity)
+            }
+        }
             .aspectRatio(1, contentMode: .fit)
             .frame(maxWidth: 250)
+            .transaction { $0.animation = nil }
             .background(GeometryReader { geometry in
                 Color.clear.preference(
                     key: SlotFramesKey.self,
@@ -640,98 +641,29 @@ struct TrackDetailOverlay: View {
             })
     }
 
-    // MARK: Heroes
+    // MARK: Hero
 
-    /// The covers, one per page, drawn over the card. Clipped to the
-    /// card's width always — so a cover paging out is cut at the card's
-    /// edge like the content under it — and to the card's full bounds
-    /// once the open flight has landed (`heroClipped`), released the
-    /// instant a dismiss starts so the current cover can fly down to its
-    /// row. The clip is never animated: it must be there or not, never
-    /// half-way across a flying cover.
+    /// The current track's cover in flight: drawn at the row's 48pt frame
+    /// while collapsed and at its page's cover slot once expanded,
+    /// springing between the two. Laid out at slot size and scaled, so
+    /// the image never re-lays-out mid-flight; the corner radius reads
+    /// 8pt small and 28pt large. The slot is placed from the strip's
+    /// fixed bottom edge. The container carries `dragOffset`, so the
+    /// collapsed target compensates to land on the row wherever the card
+    /// was let go. With no row to land on (paged to a track whose row is
+    /// off screen) the cover shrinks and fades in place instead.
     ///
-    /// Clipping to the card is also what makes the covers move in the CI
-    /// recordings. The hero group is otherwise screen-sized and overlaps
-    /// the frosted backdrop; on the software-rendered CI simulator the
-    /// material re-renders behind every change to that region and the
-    /// covers' sideways motion was dropped wholesale — they jumped to the
-    /// swipe's end point while the strip's text (inside the opaque card)
-    /// tweened — in three recordings with three different animation
-    /// wirings (runs 37260289707, 37261598128, 37262716674). The open
-    /// flight, which the recorded scenes run with the frost off, always
-    /// animated.
-    private var heroes: some View {
-        ZStack {
-            ForEach(pages) { page in
-                hero(for: page)
-                    .transition(.identity)
-            }
-            if ScreenshotMode.pagesDetails {
-                pagingProbes(inHeroes: true)
-                // Round 3: the real hero's chain and inputs, artwork swapped
-                // for a white rectangle, drawn over the real covers.
-                ForEach(pages) { page in
-                    hero(for: page, probe: true)
-                        .transition(.identity)
-                }
-                heroInputsReadout
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .mask {
-            GeometryReader { geometry in
-                let clip = heroClip(in: geometry.size)
-                Rectangle()
-                    .frame(width: clip.width, height: clip.height)
-                    .position(x: clip.midX, y: clip.midY)
-            }
-            .transaction { $0.animation = nil }
-        }
-        .allowsHitTesting(false)
-    }
-
-    /// The card's frame in the card container's space (the strip plus its
-    /// insets), or the full width before the strip has been measured.
-    private func heroClip(in size: CGSize) -> CGRect {
-        guard stripFrame.width > 0 else {
-            return CGRect(origin: .zero, size: size)
-        }
-        if heroClipped {
-            return CGRect(
-                x: stripFrame.minX,
-                y: stripFrame.minY - stripTopInset,
-                width: stripFrame.width,
-                height: stripFrame.height + stripTopInset + stripBottomInset
-            )
-        }
-        return CGRect(x: stripFrame.minX, y: 0, width: stripFrame.width, height: size.height)
-    }
-
-    /// A page's hero: the artwork, drawn at the row's 48pt frame while
-    /// collapsed and at its page's cover slot once expanded, springing
-    /// between the two. It is laid out at slot size and scaled, so the
-    /// image never re-lays-out mid-flight; the corner radius reads 8pt
-    /// small and 28pt large. The slot is placed from the strip's fixed
-    /// bottom edge. The container carries `dragOffset`, so the collapsed
-    /// target compensates to land on the row wherever the card was let
-    /// go. With no row to land on (paged to a track whose row is off
-    /// screen) the cover shrinks and fades in place instead.
-    ///
-    /// The page shift is a separate `.offset` with its own value-keyed
-    /// animation (`pageAnimation`, keyed on the shift itself). The hero
-    /// does not pick up the `withAnimation` transactions that move the
-    /// strip's text: with the shift folded into `.position` under the
-    /// `expanded` animation, and again with it as an un-keyed `.offset`
-    /// outside that modifier, the covers ignored both the drag tween and
-    /// the `page(to:)` spring — they jumped to the finger's end point as
-    /// the swipe began and snapped to centre at commit while the text was
-    /// still sliding (osebo, 2026-10-05; CI runs 37260289707 and
-    /// 37261598128, measured frame by frame). The `expanded`-keyed flight
-    /// has always animated, so the shift gets the same treatment: an
-    /// explicit animation that fires when the shift changes — nil while
-    /// the finger is down (1:1), the page spring on commit.
-    private func hero(for page: Page, probe: Bool = false) -> some View {
-        let track = page.track
+    /// Only the flight lives here. Once the open spring has settled the
+    /// page draws the cover in its own slot and this view is hidden (an
+    /// un-animated opacity flip, pixel-identical), so paging moves the
+    /// covers with the pages' `.offset` like the text — a hero that also
+    /// paged jumped to the finger's end point on every swipe through four
+    /// wirings and three probe rounds (CI runs 37260289707 … 37278515560,
+    /// measured per frame) for a reason that never surfaced. `dismiss()`
+    /// shows the hero again before it collapses `expanded`, so the cover
+    /// flies home from the slot.
+    private var hero: some View {
+        let track = current
         let slot = slotFrames[track.id]
             ?? CGRect(x: (stripFrame.width - 250) / 2, y: 0, width: 250, height: 250)
         let pageHeight = pageHeights[track.id] ?? slot.maxY
@@ -741,111 +673,26 @@ struct TrackDetailOverlay: View {
             width: slot.width,
             height: slot.height
         )
-        let isCurrent = page.position == 0
         let source = selection.sourceFrame
         let hasSource = source.width > 0
         let shrunk = CGRect(x: slotFrame.midX - 24, y: slotFrame.midY - 24, width: 48, height: 48)
-        let flies = isCurrent && !expanded
+        let flies = !expanded
         let target = flies ? (hasSource ? source : shrunk) : slotFrame
         let scale = target.width / slot.width
-        return ZStack {
-            if probe {
-                Rectangle().fill(Color.white.opacity(0.9))
-            } else {
-                TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 56))
-            }
-        }
+        return TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 56))
             .frame(width: slot.width, height: slot.height)
             .clipShape(RoundedRectangle(cornerRadius: flies ? 8 / scale : 28, style: .continuous))
             .scaleEffect(scale)
             .position(x: target.midX, y: flies ? target.midY - dragOffset : target.midY)
             .opacity(flies && !hasSource ? 0 : 1)
             .animation(expanded ? TrackDetailMotion.open : TrackDetailMotion.close, value: expanded)
-            // Paging shift, self-animated (see above). Zero for the
-            // current page at rest, so the fly-back is unaffected.
-            .offset(x: pageShift(page))
-            .animation(pageAnimation, value: pageShift(page))
-    }
-
-    // MARK: Diagnostic probes (page-demo recording only)
-
-    /// DIAGNOSTIC, `page-demo` scene only — remove once the stepping covers
-    /// are understood. 18pt white squares, each carrying one slice of the
-    /// hero's modifier chain and driven by the same `pageDrag`, laid out
-    /// in rows above the card so a recording shows which slice (or which
-    /// container) drops the sideways motion. Rows, top to bottom:
-    ///   45pt  A: position + offset(pageDrag) + .animation(pageAnimation, value:)
-    ///   70pt  B: position + offset(pageDrag), transaction animation only
-    ///   95pt  C: offset only (no position), transaction animation only
-    ///  120pt  D: the hero's full chain on a TrackArtwork (clipShape, scaleEffect,
-    ///            position, opacity, .animation(value: expanded), offset, .animation(value:))
-    /// `inHeroes: false` draws rows A–D in the card container; `true` draws
-    /// the same rows 8pt further right inside the `heroes` ZStack (masked).
-    private func pagingProbes(inHeroes: Bool) -> some View {
-        let x: CGFloat = inHeroes ? 330 : 300
-        let square = Rectangle().fill(Color.white).frame(width: 18, height: 18)
-        return ZStack {
-            square
-                .position(x: x, y: 45)
-                .offset(x: pageDrag)
-                .animation(pageAnimation, value: pageDrag)
-            square
-                .position(x: x, y: 70)
-                .offset(x: pageDrag)
-            square
-                .offset(x: x + pageDrag, y: 95)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            TrackArtwork(url: nil, symbolFont: .system(size: 8))
-                .frame(width: 18, height: 18)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                .scaleEffect(1)
-                .position(x: x, y: 120)
-                .opacity(1)
-                .animation(expanded ? TrackDetailMotion.open : TrackDetailMotion.close, value: expanded)
-                .offset(x: pageDrag)
-                .animation(pageAnimation, value: pageDrag)
-            if inHeroes {
-                // Round 2 (A–D all animated, the hero didn't). What's left:
-                //  E 132pt: small square, but inside ForEach(pages) with
-                //           pageShift(page) + .transition(.identity) like the hero.
-                //  F 250pt: large (240×24) white bar, no ForEach.
-                //  G 712pt: large bar inside the ForEach.
-                ForEach(pages) { page in
-                    square
-                        .position(x: x, y: 132)
-                        .offset(x: pageShift(page))
-                        .animation(pageAnimation, value: pageShift(page))
-                        .transition(.identity)
-                }
-                Rectangle().fill(Color.white).frame(width: 240, height: 24)
-                    .position(x: 250, y: 250)
-                    .offset(x: pageDrag)
-                    .animation(pageAnimation, value: pageDrag)
-                ForEach(pages) { page in
-                    Rectangle().fill(Color.white).frame(width: 240, height: 20)
-                        .position(x: 250, y: 712)
-                        .offset(x: pageShift(page))
-                        .animation(pageAnimation, value: pageShift(page))
-                        .transition(.identity)
-                }
-            }
-        }
-        .allowsHitTesting(false)
-    }
-
-    /// DIAGNOSTIC (`page-demo`): the current hero's inputs as text, so a
-    /// recording shows whether any of them move during a swipe.
-    private var heroInputsReadout: some View {
-        let slot = slotFrames[current.id] ?? .zero
-        let height = pageHeights[current.id] ?? -1
-        let text = "s \(Int(slot.minX)),\(Int(slot.minY)),\(Int(slot.width))  st \(Int(stripFrame.minX)),\(Int(stripFrame.minY)),\(Int(stripFrame.maxY)),\(Int(stripFrame.width))  h \(Int(height))  d \(Int(pageDrag))  src \(Int(selection.sourceFrame.minX)),\(Int(selection.sourceFrame.minY))  e \(expanded ? 1 : 0)"
-        return Text(text)
-            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-            .foregroundStyle(.white)
-            .lineLimit(1)
-            .minimumScaleFactor(0.5)
-            .frame(width: 280, alignment: .leading)
-            .position(x: 150, y: 95)
+            // Hidden while the page draws the cover. Outside the flight's
+            // animation and never animated itself, so the hand-off is a
+            // clean swap and never a cross-fade mid-flight.
+            .opacity(settled ? 0 : 1)
+            .transaction { $0.animation = nil }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
     }
 
     // MARK: Chrome
@@ -1039,8 +886,9 @@ struct TrackDetailOverlay: View {
                 case .horizontal:
                     let dx = translation.width
                     let hasNeighbour = dx < 0 ? nextTrack != nil : previousTrack != nil
-                    // The finger drives the covers directly.
-                    pageAnimation = nil
+                    // Swiping before the open spring has quite settled: the
+                    // page takes the cover now, so it pages with the finger.
+                    if expanded && !settled { settled = true }
                     pageDrag = hasNeighbour ? dx : dx / 4
                 }
             }
@@ -1068,7 +916,6 @@ struct TrackDetailOverlay: View {
                     } else if dx > 0, let previous = previousTrack, max(dx, predicted) > threshold {
                         page(to: previous)
                     } else {
-                        pageAnimation = TrackDetailMotion.snapBack
                         withAnimation(TrackDetailMotion.snapBack) {
                             pageDrag = 0
                         }
@@ -1102,9 +949,6 @@ struct TrackDetailOverlay: View {
                 demoFinger = start
             }
             try? await Task.sleep(for: .seconds(PageDemoScript.touch))
-            // A finger would drive the covers directly; the scripted swipe
-            // tweens them on the same curve as the strip and the fingertip.
-            pageAnimation = .easeInOut(duration: PageDemoScript.swipe)
             withAnimation(.easeInOut(duration: PageDemoScript.swipe)) {
                 demoFinger = CGPoint(x: start.x + travel, y: fingerY)
                 pageDrag = travel
@@ -1126,7 +970,6 @@ struct TrackDetailOverlay: View {
     private func page(to track: LibraryTrack) {
         TrackDetailHaptics.tap.impactOccurred()
         let heroID = TrackDetailSelection.heroID(list: selection.list, track: track)
-        pageAnimation = TrackDetailMotion.page
         withAnimation(TrackDetailMotion.page) {
             selection.track = track
             selection.sourceFrame = resolvedRowFrame(for: track, heroID: heroID) ?? .zero
@@ -1160,6 +1003,9 @@ struct TrackDetailOverlay: View {
         if let frame = resolvedRowFrame(for: track, heroID: selection.heroID) {
             selection.sourceFrame = frame
         }
+        // The hero takes the cover back from the page (un-animated, same
+        // pixels) and flies it home.
+        settled = false
         withAnimation(TrackDetailMotion.close) {
             expanded = false
         }
