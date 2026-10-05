@@ -27,8 +27,6 @@ struct LibraryListView: View {
     /// The track detail card (owned by HomeView, which hosts the overlay);
     /// tapping a cover sets it.
     @Binding var detail: TrackDetailSelection?
-    /// True while the detail card's cover has flown out of its row.
-    var heroExpanded = false
     @State private var draftPendingDelete: Draft?
 
     private var trimmedQuery: String {
@@ -172,7 +170,11 @@ struct LibraryListView: View {
                             detail = TrackDetailSelection(track: track, heroID: heroID, sourceFrame: coverFrame)
                         },
                         heroID: heroID,
-                        coverHidden: heroExpanded && detail?.heroID == heroID
+                        // Hidden for the overlay's whole lifetime (not just while
+                        // expanded): on dismiss the home layer is still scaled
+                        // back from 0.94, so a cover shown here would pop in
+                        // off its spot and double the one flying home.
+                        coverHidden: detail?.heroID == heroID
                     )
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)

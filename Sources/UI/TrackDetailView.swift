@@ -42,7 +42,9 @@ enum TrackDetailMotion {
     /// it still reads as a lift rather than a cut.
     static let open = Animation.spring(response: 0.36, dampingFraction: 0.82).speed(1 / timeScale)
     /// The fly-back: quicker and more damped, it lands rather than bounces.
-    static let close = Animation.spring(response: 0.28, dampingFraction: 0.9).speed(1 / timeScale)
+    static let close = Animation.spring(response: closeResponse, dampingFraction: closeDamping).speed(1 / timeScale)
+    static let closeResponse: Double = 0.28
+    static let closeDamping: Double = 0.9
     /// Chrome and pills leaving ahead of the cover on dismiss.
     static let exit = Animation.easeIn(duration: 0.14 * timeScale)
     /// Backdrop dim/frost fading with the card on device (the recording
@@ -50,8 +52,20 @@ enum TrackDetailMotion {
     static let backdropIn = Animation.easeOut(duration: 0.32 * timeScale)
     static let backdropOut = Animation.easeIn(duration: 0.2 * timeScale)
     /// When the overlay can be removed after `close` starts (no
-    /// animation-completion hook before iOS 17).
-    static let settle: TimeInterval = 0.32 * timeScale
+    /// animation-completion hook before iOS 17): the spring's settling
+    /// time, so the cover is at rest on its row — not a hand-picked
+    /// number that drifts when the spring is retuned. Removing the overlay
+    /// early snapped the cover the last pixel or two (osebo, 2026-10-05).
+    static let settle: TimeInterval = settlingTime(response: closeResponse, dampingFraction: closeDamping) * timeScale
+
+    /// How long an underdamped spring takes to stay within `epsilon` of
+    /// its target (the envelope of the step response, as in
+    /// `Spring.settlingDuration`).
+    static func settlingTime(response: Double, dampingFraction zeta: Double, epsilon: Double = 0.001) -> TimeInterval {
+        let omega = 2 * Double.pi / response
+        let envelope = 1 / (1 - zeta * zeta).squareRoot()
+        return log(envelope / epsilon) / (zeta * omega)
+    }
 
     /// Stagger of the card's chrome behind the cover, top to bottom.
     /// (Applied after `speed`, so scaled by hand.) The whole cascade
@@ -123,9 +137,12 @@ struct TrackDetailOverlay: View {
     @EnvironmentObject private var model: AppModel
     let selection: TrackDetailSelection
     @ObservedObject var player: TrackPlayer
-    /// True once the cover has flown out of its row. Owned by `HomeView` so
-    /// the row knows to hide its copy; flipped back on dismiss, and the row
-    /// shows its cover again under the one flying home.
+    /// True once the cover has flown out of its row; flipped back on
+    /// dismiss to fly it home. Owned by `HomeView` (it drives the home
+    /// layer's recession). The row's own cover stays hidden for as long as
+    /// the overlay is mounted — not just while expanded — so there is one
+    /// visible cover throughout; the row's reappears under the hero only
+    /// when `onDismiss` removes the overlay.
     @Binding var expanded: Bool
     let safeArea: EdgeInsets
     /// Called once the fly-back animation has finished; removes the overlay.
@@ -245,6 +262,8 @@ struct TrackDetailOverlay: View {
             .offset(y: dragOffset)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        // Taps go through to the library while the cover settles on its row.
+        .allowsHitTesting(!dismissing)
         .onChange(of: expanded) { expanded in
             guard ScreenshotMode.recordsDetails else { return }
             if expanded {
@@ -607,7 +626,8 @@ struct TrackDetailOverlay: View {
             expanded = false
         }
         // No animation-completion hook before iOS 17: remove the overlay
-        // once the fly-back has settled.
+        // once the fly-back has settled. The row's cover, hidden all this
+        // time, takes over in the same frame at the same spot.
         DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.settle) {
             onDismiss()
         }
