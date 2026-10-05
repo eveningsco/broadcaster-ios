@@ -34,28 +34,35 @@ enum HeroSpace {
 /// their own clocks.
 enum TrackDetailMotion {
     /// 1 on device. The recorded `track-demo` scene plays at half speed
-    /// (2): the CI simulator draws ~15 fps, which turns a 0.5 s spring
-    /// into five or six frames — too few to read as motion.
+    /// (2): the CI simulator draws ~15 fps, which turns a 0.36 s spring
+    /// into four or five frames — too few to read as motion.
     static let timeScale: Double = ScreenshotMode.recordsDetails ? 2 : 1
-    /// The hero's flight and the card rising under it.
-    static let open = Animation.spring(response: 0.5, dampingFraction: 0.82).speed(1 / timeScale)
-    /// The fly-back: a touch quicker and more damped, it lands rather than bounces.
-    static let close = Animation.spring(response: 0.38, dampingFraction: 0.9).speed(1 / timeScale)
+    /// The hero's flight and the card rising under it. Quick (osebo asked
+    /// for a faster open/close, 2026-10-05) with a hint of overshoot so
+    /// it still reads as a lift rather than a cut.
+    static let open = Animation.spring(response: 0.36, dampingFraction: 0.82).speed(1 / timeScale)
+    /// The fly-back: quicker and more damped, it lands rather than bounces.
+    static let close = Animation.spring(response: 0.28, dampingFraction: 0.9).speed(1 / timeScale)
     /// Chrome and pills leaving ahead of the cover on dismiss.
-    static let exit = Animation.easeIn(duration: 0.2 * timeScale)
+    static let exit = Animation.easeIn(duration: 0.14 * timeScale)
+    /// Backdrop dim/frost fading with the card on device (the recording
+    /// rides `open`/`exit` instead; see `TrackDetailOverlay.backdropAnimation`).
+    static let backdropIn = Animation.easeOut(duration: 0.32 * timeScale)
+    static let backdropOut = Animation.easeIn(duration: 0.2 * timeScale)
     /// When the overlay can be removed after `close` starts (no
     /// animation-completion hook before iOS 17).
-    static let settle: TimeInterval = 0.45 * timeScale
+    static let settle: TimeInterval = 0.32 * timeScale
 
     /// Stagger of the card's chrome behind the cover, top to bottom.
-    /// (Applied after `speed`, so scaled by hand.)
-    static let headingDelay: Double = 0.04 * timeScale
-    static let scrubberDelay: Double = 0.1 * timeScale
-    static let transportDelay: Double = 0.14 * timeScale
+    /// (Applied after `speed`, so scaled by hand.) The whole cascade
+    /// starts within 0.16 s so it ends with the hero, not after it.
+    static let headingDelay: Double = 0.03 * timeScale
+    static let scrubberDelay: Double = 0.06 * timeScale
+    static let transportDelay: Double = 0.09 * timeScale
     /// The pills land last, left to right.
-    static let leftPillDelay: Double = 0.18 * timeScale
-    static let middlePillDelay: Double = 0.21 * timeScale
-    static let rightPillDelay: Double = 0.24 * timeScale
+    static let leftPillDelay: Double = 0.12 * timeScale
+    static let middlePillDelay: Double = 0.14 * timeScale
+    static let rightPillDelay: Double = 0.16 * timeScale
 }
 
 /// Frames (in `HeroSpace`) of the list covers that can grow into the detail
@@ -182,7 +189,11 @@ struct TrackDetailOverlay: View {
     }
 
     /// The card's surface; the pills share it so they read as one set.
-    private let surface = Color(.tertiarySystemBackground)
+    /// Pure black (osebo, 2026-10-05) rather than the system's off-grey;
+    /// `edge` is a faint hairline that keeps the black shapes separable
+    /// from the dark frosted backdrop behind them.
+    private let surface = Color.black
+    private let edge = Color.white.opacity(0.08)
     private let cardCorner: CGFloat = 40
 
     /// How far along the drag-to-dismiss is (0 at rest, 1 at the commit
@@ -201,7 +212,7 @@ struct TrackDetailOverlay: View {
         }
         // Posed stills arrive expanded, nothing to animate.
         if ScreenshotMode.isActive { return nil }
-        return expanded ? .easeOut(duration: 0.45) : .easeIn(duration: 0.3)
+        return expanded ? TrackDetailMotion.backdropIn : TrackDetailMotion.backdropOut
     }
 
     var body: some View {
@@ -324,6 +335,10 @@ struct TrackDetailOverlay: View {
         .background(
             RoundedRectangle(cornerRadius: cardCorner, style: .continuous)
                 .fill(surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: cardCorner, style: .continuous)
+                        .strokeBorder(edge, lineWidth: 1)
+                )
                 .reveal(expanded, rise: 28, scale: 0.96)
         )
         .overlay(alignment: .topTrailing) {
@@ -535,6 +550,7 @@ struct TrackDetailOverlay: View {
             .frame(maxWidth: .infinity)
             .frame(height: 56)
             .background(Capsule().fill(surface))
+            .overlay(Capsule().strokeBorder(edge, lineWidth: 1))
             .contentShape(Capsule())
     }
 
