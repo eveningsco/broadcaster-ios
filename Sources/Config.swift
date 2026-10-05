@@ -13,11 +13,8 @@ enum Config {
     static let apiBaseURL = URL(string: "https://api.evenings.co")!
     /// Public website; track pages live at /<stationSlug>/tracks/<id>.
     static let webBaseURL = URL(string: "https://evenings.fm")!
-    /// RTMPS endpoint (app path included); the stream key is appended as the
-    /// stream name. TLS keeps the stream key off the wire in cleartext. There is
-    /// deliberately no plain-RTMP fallback: falling back on a failed handshake
-    /// would let anyone on the network downgrade the connection and read the key.
-    static let rtmpURL = "rtmps://s2.evenings.co:443/evenings"
+    /// RTMP endpoint (app path included); the stream key is appended as the stream name.
+    static let rtmpURL = "rtmp://s2.evenings.co/evenings"
     /// Media server base; live streams play from /s/<channelId>.
     static let mediaBaseURL = URL(string: "https://media.evenings.co")!
     static let audioBitrate = 192 * 1000
