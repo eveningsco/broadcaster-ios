@@ -6,7 +6,10 @@ options:
 packages:
   HaishinKit:
     url: https://github.com/HaishinKit/HaishinKit.swift
-    from: "2.0.0"
+    # Pinned so every build (local, Screenshots, TestFlight) ships the same
+    # code. Package.resolved lives in the gitignored .xcodeproj, so a range
+    # here would silently pick up new releases. Bump deliberately.
+    exactVersion: "2.2.5"
 targets:
   EveningsBroadcaster:
     type: application
