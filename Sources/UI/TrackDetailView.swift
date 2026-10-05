@@ -791,6 +791,31 @@ struct TrackDetailOverlay: View {
                 .animation(expanded ? TrackDetailMotion.open : TrackDetailMotion.close, value: expanded)
                 .offset(x: pageDrag)
                 .animation(pageAnimation, value: pageDrag)
+            if inHeroes {
+                // Round 2 (A–D all animated, the hero didn't). What's left:
+                //  E 132pt: small square, but inside ForEach(pages) with
+                //           pageShift(page) + .transition(.identity) like the hero.
+                //  F 250pt: large (240×24) white bar, no ForEach.
+                //  G 712pt: large bar inside the ForEach.
+                ForEach(pages) { page in
+                    square
+                        .position(x: x, y: 132)
+                        .offset(x: pageShift(page))
+                        .animation(pageAnimation, value: pageShift(page))
+                        .transition(.identity)
+                }
+                Rectangle().fill(Color.white).frame(width: 240, height: 24)
+                    .position(x: 250, y: 250)
+                    .offset(x: pageDrag)
+                    .animation(pageAnimation, value: pageDrag)
+                ForEach(pages) { page in
+                    Rectangle().fill(Color.white).frame(width: 240, height: 20)
+                        .position(x: 250, y: 712)
+                        .offset(x: pageShift(page))
+                        .animation(pageAnimation, value: pageShift(page))
+                        .transition(.identity)
+                }
+            }
         }
         .allowsHitTesting(false)
     }
