@@ -625,14 +625,8 @@ struct TrackDetailOverlay: View {
     private func coverSlot(for track: LibraryTrack) -> some View {
         ZStack {
             if settled {
-                // DIAGNOSTIC (page-demo only, one run): the cover parked at
-                // the swipe's end point even as a plain sibling of the title
-                // under the same page .offset (run 37308733560). The one
-                // thing it has that the text doesn't is this 250pt clip
-                // mask; draw it unclipped in the recording to see whether
-                // the CI renderer is dropping masked layers' motion.
                 TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 56))
-                    .clipShape(RoundedRectangle(cornerRadius: ScreenshotMode.pagesDetails ? 0 : 28, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                     .transition(.identity)
             }
         }
