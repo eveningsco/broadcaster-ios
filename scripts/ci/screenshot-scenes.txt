@@ -1,0 +1,61 @@
+# Which screenshot scenes a changed file can affect. Used by
+# `scripts/ci-screenshots.py --scenes auto` (the default) to capture only the
+# scenes a branch's changes touch since its last full screenshot run.
+#
+#   <glob>  <scene> [<scene> ...]
+#
+# Globs are matched against repo-relative paths with fnmatch (`*` also matches
+# `/`). The FIRST matching line wins, so put specific paths above broad ones.
+#   ALL   every still scene (shared look: type, fonts, assets, app shell)
+#   NONE  no visual effect (networking, recording, upload)
+# A changed file that matches no line counts as ALL, so a new view file is
+# screenshotted everywhere until someone maps it here.
+#
+# `-demo` recordings (edit-demo, track-demo, page-demo) are never chosen
+# automatically; they cost ~30-60 s each. Ask for them with --scenes.
+
+# --- Signed out ------------------------------------------------------------
+Sources/UI/LoginView.swift          login
+Sources/UI/SignUpView.swift         signup
+Sources/UI/AuthComponents.swift     login signup
+
+# --- Home tabs and sheets ---------------------------------------------------
+Sources/UI/HomeView.swift           library explore account edit track stage live
+Sources/UI/LibraryView.swift        library account edit track
+Sources/UI/ExploreView.swift        explore
+Sources/UI/AccountView.swift        account
+Sources/UI/AudioEditView.swift      edit
+Sources/UI/TrimEditView.swift       edit
+Sources/UI/TempoEditView.swift      edit
+Sources/UI/TrackDetailView.swift    track
+
+# --- Stage ------------------------------------------------------------------
+Sources/UI/BroadcastView.swift      stage live
+
+# --- Non-UI code that still feeds what's on screen ----------------------------
+Sources/Broadcast/WaveformLoader.swift      edit track
+Sources/Broadcast/TrackPlayer.swift         edit track
+Sources/Broadcast/BroadcastController.swift stage live
+
+# --- No visual effect ---------------------------------------------------------
+Sources/API/*                       NONE
+Sources/Recording/*                 NONE
+Sources/Broadcast/*                 NONE
+Sources/Config.swift                NONE
+Sources/Assets.xcassets/AppIcon.appiconset/*  NONE
+*.md                                NONE
+docs/*                              NONE
+.github/workflows/testflight.yml    NONE
+scripts/ci-screenshots.py           NONE
+scripts/ci/screenshot-scenes.txt    NONE
+.gitignore                          NONE
+
+# --- Shared look and the capture pipeline itself ------------------------------
+Sources/UI/Typography.swift         ALL
+Sources/Fonts/*                     ALL
+Sources/Assets.xcassets/*           ALL
+Sources/Debug/ScreenshotMode.swift  ALL
+Sources/*                           ALL
+project.yml                         ALL
+scripts/*                           ALL
+.github/workflows/simulator-screenshots.yml  ALL

@@ -106,9 +106,26 @@ captures every screen to a PNG artifact.
 
 ```sh
 # From any machine with python3 and a GitHub token with `repo` scope:
-GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch
-# → screenshots/{login,signup,library,explore,account,edit,stage,live}.png
+GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch            # scenes your changes touch
+GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch --dry-run  # what it would do, without doing it
+GH_TOKEN=... scripts/ci-screenshots.py --scenes "login stage"     # exactly these scenes
+# → screenshots/<scene>.png
 ```
+
+**How often runs happen.** Every run is a macOS job (10x billing) and the
+build costs far more than the scenes (~6–12 min vs ~5–10 s per still), so
+`scripts/ci-screenshots.py` avoids starting runs:
+
+| Rule | What happens |
+| --- | --- |
+| Auto scenes (default) | Captures only the scenes touched by changes since the branch's last full run. Which files touch which scenes is listed in `scripts/ci/screenshot-scenes.txt`. A file that isn't listed counts as every scene. If nothing visual changed, it starts no run. |
+| Recordings opt-in | `-demo` scenes (~30–60 s each) only run when named with `--scenes`. |
+| Reuse | If a successful run of the same commit, device and appearance already covered the scenes, it downloads that run's results instead of starting a new run. |
+| Coalesce | If a run for the branch is queued or running, it waits for that run. It then starts one follow-up run for anything pushed in the meantime. The workflow's `concurrency` group enforces the same rule for runs started by hand. |
+| Throttle | At most 1 new run per branch every 15 min and 10 per branch per 24 h (`SCREENSHOTS_COOLDOWN_MIN`, `SCREENSHOTS_DAILY_MAX`). When throttled it exits with status **3**: keep working and fold the next changes into one later run. `--force` skips the throttle. |
+
+When you add a view or move code between views, update
+`scripts/ci/screenshot-scenes.txt`. The first matching line wins.
 
 > **Setup (once):** GitHub only knows about a `workflow_dispatch`-only
 > workflow once its file exists on the **default branch** (`main`) — until
