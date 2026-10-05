@@ -170,7 +170,6 @@ reference captures and `docs/videos/` reference recordings
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](LICENSE). The license covers
-the source code only; it does not grant rights to the Evenings name, logo or
-app icon (see section 6 of the license), and the bundled commercial fonts are
-used under their own separate licenses.
+Licensed under the [MIT License](LICENSE). The license covers the source code
+only: it does not grant rights to the Evenings name, logo or app icon, and the
+bundled commercial fonts are used under their own separate licenses.
