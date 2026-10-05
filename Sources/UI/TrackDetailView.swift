@@ -416,6 +416,10 @@ struct TrackDetailOverlay: View {
 
                 heroes
 
+                if ScreenshotMode.pagesDetails {
+                    pagingProbes(inHeroes: false)
+                }
+
                 if let demoFinger {
                     DemoFingertip()
                         .position(demoFinger)
@@ -433,7 +437,7 @@ struct TrackDetailOverlay: View {
         .onChange(of: expanded) { expanded in
             if expanded {
                 DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.openSettle) {
-                    if self.expanded { heroClipped = true }
+                    if self.expanded && !ScreenshotMode.pagesDetails { heroClipped = true }
                 }
                 // Diagnostic (osebo's "thumbnails don't transition fluidly"):
                 // `page-demo` keeps the frost off for the whole recording.
@@ -662,6 +666,9 @@ struct TrackDetailOverlay: View {
                 hero(for: page)
                     .transition(.identity)
             }
+            if ScreenshotMode.pagesDetails {
+                pagingProbes(inHeroes: true)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .mask {
@@ -745,6 +752,47 @@ struct TrackDetailOverlay: View {
             // current page at rest, so the fly-back is unaffected.
             .offset(x: pageShift(page))
             .animation(pageAnimation, value: pageShift(page))
+    }
+
+    // MARK: Diagnostic probes (page-demo recording only)
+
+    /// DIAGNOSTIC, `page-demo` scene only — remove once the stepping covers
+    /// are understood. 18pt white squares, each carrying one slice of the
+    /// hero's modifier chain and driven by the same `pageDrag`, laid out
+    /// in rows above the card so a recording shows which slice (or which
+    /// container) drops the sideways motion. Rows, top to bottom:
+    ///   45pt  A: position + offset(pageDrag) + .animation(pageAnimation, value:)
+    ///   70pt  B: position + offset(pageDrag), transaction animation only
+    ///   95pt  C: offset only (no position), transaction animation only
+    ///  120pt  D: the hero's full chain on a TrackArtwork (clipShape, scaleEffect,
+    ///            position, opacity, .animation(value: expanded), offset, .animation(value:))
+    /// `inHeroes: false` draws rows A–D in the card container; `true` draws
+    /// the same rows 8pt further right inside the `heroes` ZStack (masked).
+    private func pagingProbes(inHeroes: Bool) -> some View {
+        let x: CGFloat = inHeroes ? 330 : 300
+        let square = Rectangle().fill(Color.white).frame(width: 18, height: 18)
+        return ZStack {
+            square
+                .position(x: x, y: 45)
+                .offset(x: pageDrag)
+                .animation(pageAnimation, value: pageDrag)
+            square
+                .position(x: x, y: 70)
+                .offset(x: pageDrag)
+            square
+                .offset(x: x + pageDrag, y: 95)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            TrackArtwork(url: nil, symbolFont: .system(size: 8))
+                .frame(width: 18, height: 18)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .scaleEffect(1)
+                .position(x: x, y: 120)
+                .opacity(1)
+                .animation(expanded ? TrackDetailMotion.open : TrackDetailMotion.close, value: expanded)
+                .offset(x: pageDrag)
+                .animation(pageAnimation, value: pageDrag)
+        }
+        .allowsHitTesting(false)
     }
 
     // MARK: Chrome
