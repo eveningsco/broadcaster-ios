@@ -61,7 +61,7 @@ struct ExploreListView: View {
                 if !model.exploreTracks.isEmpty {
                     sectionHeader("Recent tracks")
                     ForEach(model.exploreTracks) { track in
-                        let heroID = TrackDetailSelection.heroID(list: "explore", track: track)
+                        let heroID = TrackDetailSelection.heroID(list: .explore, track: track)
                         TrackRow(
                             track: track,
                             isPlaying: model.player.playingKey == TrackPlayer.key(for: track),
@@ -72,7 +72,7 @@ struct ExploreListView: View {
                             onShare: track.webURL != nil ? { copyLink(for: track) } : nil,
                             onOpenDetails: { coverFrame in
                                 ExploreHaptics.select.impactOccurred()
-                                detail = TrackDetailSelection(track: track, heroID: heroID, sourceFrame: coverFrame)
+                                detail = TrackDetailSelection(track: track, list: .explore, sourceFrame: coverFrame)
                             },
                             heroID: heroID,
                             // Hidden for the overlay's whole lifetime (not just while

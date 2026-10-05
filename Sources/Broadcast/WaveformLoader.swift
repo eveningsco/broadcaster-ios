@@ -12,6 +12,14 @@ final class WaveformLoader: ObservableObject {
     private var currentKey: String?
     private var task: Task<Void, Never>?
 
+    /// Levels for `key` if they are the current ones or were decoded
+    /// earlier this session (the detail card's neighbouring pages read
+    /// these); nil while still decoding or never requested.
+    func levels(for key: String) -> [Float]? {
+        if key == currentKey, let levels { return levels }
+        return cache[key]
+    }
+
     func load(key: String, url: URL?, buckets: Int = 24) {
         guard currentKey != key else { return }
         currentKey = key
