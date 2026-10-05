@@ -37,7 +37,8 @@ Sources/
 - **Capture**: `AVAudioSession` (.playAndRecord, 48 kHz preferred) +
   `AVAudioEngine` input tap. External interfaces show up as the active input
   route automatically. The same tap feeds the RMS level meter.
-- **Encode/transport**: HaishinKit RTMPStream, AAC 192 kbps — matching the
+- **Encode/transport**: HaishinKit RTMPStream over RTMPS (see [Transport
+  security](#transport-security)), AAC 192 kbps — matching the
   desktop broadcaster's FFmpeg settings, so the media server sees no difference.
 - **Background**: `UIBackgroundModes: [audio]` keeps the stream alive when the
   phone locks.
@@ -63,8 +64,17 @@ mobile broadcasting much better:
 2. **Reconnect grace window**: delay finalization ~30s after a dirty disconnect
    and resume the same recording session if the same key re-publishes.
 
-Also note the media server is plain RTMP on 1935 (no TLS termination in the
-server itself).
+## Transport security
+
+The app publishes over **RTMPS** (RTMP inside TLS) to
+`rtmps://s2.evenings.co:443/evenings`, so the stream key — which is sent as the
+RTMP stream name — never crosses the network in cleartext. HaishinKit opens the
+socket with `Network.framework`'s default TLS parameters, which means the
+server certificate is validated against the system trust store (no pinning, no
+self-signed certs). There is intentionally no fallback to plain RTMP on 1935:
+a downgrade path would expose the key to anyone who can interfere with the
+connection. If the TLS handshake fails, the normal reconnect loop keeps
+retrying RTMPS.
 
 ## Building
 
@@ -166,4 +176,10 @@ reference captures and `docs/videos/` reference recordings
 - Live metadata editing (`PUT /v1/streams/:slug/live`)
 - Local file streaming (document picker)
 - App-audio capture (ReplayKit broadcast upload extension)
-- RTMPS (needs server-side TLS termination first)
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). The license covers
+the source code only; it does not grant rights to the Evenings name, logo or
+app icon (see section 6 of the license), and the bundled commercial fonts are
+used under their own separate licenses.
