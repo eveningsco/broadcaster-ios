@@ -68,14 +68,17 @@ server itself).
 
 ## Building
 
-Requires Xcode 16+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+Requires Xcode 26+ (HaishinKit 2.2+ needs it) and
+[XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ```sh
 xcodegen generate
 open EveningsBroadcaster.xcodeproj
 ```
 
-Dependencies (HaishinKit) resolve via Swift Package Manager on first build.
+Dependencies resolve via Swift Package Manager on first build. HaishinKit is
+pinned to an exact version in `project.yml`; to upgrade, change
+`exactVersion` there and run `xcodegen generate`.
 Simulator builds work but the simulator's mic pipeline is unreliable — test
 capture on a real device.
 
