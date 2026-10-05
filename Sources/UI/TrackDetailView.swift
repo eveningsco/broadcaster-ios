@@ -189,7 +189,11 @@ struct TrackDetailOverlay: View {
     }
 
     /// The card's surface; the pills share it so they read as one set.
-    private let surface = Color(.tertiarySystemBackground)
+    /// Pure black (osebo, 2026-10-05) rather than the system's off-grey;
+    /// `edge` is a faint hairline that keeps the black shapes separable
+    /// from the dark frosted backdrop behind them.
+    private let surface = Color.black
+    private let edge = Color.white.opacity(0.08)
     private let cardCorner: CGFloat = 40
 
     /// How far along the drag-to-dismiss is (0 at rest, 1 at the commit
@@ -331,6 +335,10 @@ struct TrackDetailOverlay: View {
         .background(
             RoundedRectangle(cornerRadius: cardCorner, style: .continuous)
                 .fill(surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: cardCorner, style: .continuous)
+                        .strokeBorder(edge, lineWidth: 1)
+                )
                 .reveal(expanded, rise: 28, scale: 0.96)
         )
         .overlay(alignment: .topTrailing) {
@@ -542,6 +550,7 @@ struct TrackDetailOverlay: View {
             .frame(maxWidth: .infinity)
             .frame(height: 56)
             .background(Capsule().fill(surface))
+            .overlay(Capsule().strokeBorder(edge, lineWidth: 1))
             .contentShape(Capsule())
     }
 
