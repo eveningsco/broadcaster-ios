@@ -490,7 +490,12 @@ struct HomeView: View {
         demoWarming = false
         await demoPause(0.7)
 
-        for _ in 0..<2 {
+        // `page-demo`: one cycle, the card swiping between tracks while
+        // it is held open (see TrackDetailOverlay.runPageDemo).
+        let cycles = ScreenshotMode.pagesDetails ? 1 : 2
+        let hold: TimeInterval = ScreenshotMode.pagesDetails ? PageDemoScript.total : 3.0
+
+        for _ in 0..<cycles {
             // Tap the cover.
             demoTouch(.cover(heroID: heroID))
             await demoPause(0.45)
@@ -502,7 +507,7 @@ struct HomeView: View {
             )
 
             // Hold the card open (the frost arrives once the hero settles).
-            await demoPause(3.0)
+            await demoPause(hold)
 
             // Tap the backdrop: same as TrackDetailOverlay.dismiss().
             demoTouch(.backdrop)

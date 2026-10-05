@@ -40,6 +40,11 @@ enum ScreenshotMode {
         /// more (~13 s) — the hero transition on record. Recorded, not
         /// screenshotted (see `editDemo`).
         case trackDemo = "track-demo"
+        /// `track-demo`, then the open card pages sideways by itself: a
+        /// ghost fingertip swipes to the next track, the next again, and
+        /// back, each page committing on the page spring, before the card
+        /// is dismissed to the track it landed on (~18 s). Recorded.
+        case pageDemo = "page-demo"
         /// The stage revealed, idle (mic check, "Go Live").
         case stage
         /// The stage on air: LIVE badge and elapsed timer.
@@ -54,7 +59,9 @@ enum ScreenshotMode {
         /// The editor runs its scripted demo instead of posing from fixtures.
         var animatesEditor: Bool { self == .editDemo }
         /// Home scripts the cover tap → detail card transition itself.
-        var animatesDetails: Bool { self == .trackDemo }
+        var animatesDetails: Bool { self == .trackDemo || self == .pageDemo }
+        /// The open detail card runs `PageDemoScript` (swipes between tracks).
+        var pagesDetails: Bool { self == .pageDemo }
     }
 
     /// The requested scene, parsed once at launch. `-screenshot <scene>` lands
@@ -73,6 +80,29 @@ enum ScreenshotMode {
     /// The `track-demo` recording: the detail card's motion is tuned for
     /// the CI simulator's slow renderer (see TrackDetailMotion.timeScale).
     static var recordsDetails: Bool { scene?.animatesDetails == true }
+    /// The `page-demo` recording: the detail card swipes itself sideways.
+    static var pagesDetails: Bool { scene?.pagesDetails == true }
+}
+
+/// Timings of the `page-demo` scene's swipes, shared by the card (which
+/// performs them, see `TrackDetailOverlay.runPageDemo`) and `HomeView`
+/// (which holds the card open for `total` before dismissing it).
+enum PageDemoScript {
+    /// Each swipe's direction: -1 pages to the next track (finger moves
+    /// left), +1 to the previous.
+    static let swipes: [Int] = [-1, -1, 1]
+    /// Card open → first touch: the hero settles and the frost arrives.
+    static let settle: TimeInterval = 1.6
+    /// Touch down before the finger starts moving.
+    static let touch: TimeInterval = 0.3
+    /// The finger's travel.
+    static let swipe: TimeInterval = 0.7
+    /// Finger lifted → page committed; then the page spring plays and the
+    /// new track is read before the next swipe.
+    static let hold: TimeInterval = 2.0
+    static var total: TimeInterval {
+        settle + Double(swipes.count) * (touch + swipe + 0.1 + hold)
+    }
 }
 
 /// Translucent fingertip, roughly a thumb's contact patch, marking each

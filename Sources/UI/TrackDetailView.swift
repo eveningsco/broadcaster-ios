@@ -229,6 +229,9 @@ struct TrackDetailOverlay: View {
     /// natural height; together they place the heroes.
     @State private var slotFrames: [Int: CGRect] = [:]
     @State private var pageHeights: [Int: CGFloat] = [:]
+    /// `page-demo` only: the ghost fingertip's position (card space)
+    /// while it swipes the strip; nil when lifted.
+    @State private var demoFinger: CGPoint?
 
     private var track: LibraryTrack { selection.track }
 
@@ -399,6 +402,11 @@ struct TrackDetailOverlay: View {
                 .gesture(cardDrag)
 
                 heroes
+
+                if let demoFinger {
+                    DemoFingertip()
+                        .position(demoFinger)
+                }
             }
             .coordinateSpace(name: "card")
             .onPreferenceChange(StripFrameKey.self) { stripFrame = $0 }
@@ -437,6 +445,10 @@ struct TrackDetailOverlay: View {
         .task(id: current.id) {
             guard !isFixture else { return }
             waveform.load(key: key(current), url: current.audioURL, buckets: 48)
+        }
+        .task {
+            guard ScreenshotMode.pagesDetails else { return }
+            await runPageDemo()
         }
         .sheet(isPresented: $editingAudio) {
             AudioEditSheet(track: current)
@@ -883,6 +895,42 @@ struct TrackDetailOverlay: View {
                     break
                 }
             }
+    }
+
+    /// The `page-demo` recording: swipe the strip the way a finger would
+    /// — touch down over the cover, pull it `0.45 × stride` sideways (past
+    /// the ⅓ commit threshold) on an ease, lift, and commit through the
+    /// same `page(to:)` the gesture uses, so what's recorded is the real
+    /// paging motion. `HomeView.runTrackDemo` holds the card open for
+    /// `PageDemoScript.total` meanwhile.
+    @MainActor
+    private func runPageDemo() async {
+        try? await Task.sleep(for: .seconds(PageDemoScript.settle))
+        for direction in PageDemoScript.swipes {
+            let neighbour = direction < 0 ? nextTrack : previousTrack
+            guard let neighbour, stripFrame.width > 0 else { continue }
+            let slot = slotFrames[current.id]
+                ?? CGRect(x: (stripFrame.width - 250) / 2, y: 0, width: 250, height: 250)
+            let pageHeight = pageHeights[current.id] ?? slot.maxY
+            let fingerY = stripFrame.maxY - (pageHeight - slot.minY) + slot.height * 0.62
+            let travel = CGFloat(direction) * pageStride * 0.45
+            let start = CGPoint(x: stripFrame.midX - travel / 2, y: fingerY)
+
+            withAnimation(.easeOut(duration: 0.18)) {
+                demoFinger = start
+            }
+            try? await Task.sleep(for: .seconds(PageDemoScript.touch))
+            withAnimation(.easeInOut(duration: PageDemoScript.swipe)) {
+                demoFinger = CGPoint(x: start.x + travel, y: fingerY)
+                pageDrag = travel
+            }
+            try? await Task.sleep(for: .seconds(PageDemoScript.swipe + 0.1))
+            withAnimation(.easeOut(duration: 0.18)) {
+                demoFinger = nil
+            }
+            page(to: neighbour)
+            try? await Task.sleep(for: .seconds(PageDemoScript.hold))
+        }
     }
 
     /// Commit a page: the neighbour becomes the current track and the
