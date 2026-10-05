@@ -51,7 +51,9 @@ enum TrackDetailMotion {
     /// The hero's flight and the card rising under it. Quick (osebo asked
     /// for a faster open/close, 2026-10-05) with a hint of overshoot so
     /// it still reads as a lift rather than a cut.
-    static let open = Animation.spring(response: 0.36, dampingFraction: 0.82).speed(1 / timeScale)
+    static let open = Animation.spring(response: openResponse, dampingFraction: openDamping).speed(1 / timeScale)
+    static let openResponse: Double = 0.36
+    static let openDamping: Double = 0.82
     /// The fly-back: quicker and more damped, it lands rather than bounces.
     static let close = Animation.spring(response: closeResponse, dampingFraction: closeDamping).speed(1 / timeScale)
     static let closeResponse: Double = 0.28
@@ -73,6 +75,9 @@ enum TrackDetailMotion {
     /// number that drifts when the spring is retuned. Removing the overlay
     /// early snapped the cover the last pixel or two (osebo, 2026-10-05).
     static let settle: TimeInterval = settlingTime(response: closeResponse, dampingFraction: closeDamping) * timeScale
+    /// When the open flight has landed (the heroes are clipped to the
+    /// card from then on; see `TrackDetailOverlay.heroes`).
+    static let openSettle: TimeInterval = settlingTime(response: openResponse, dampingFraction: openDamping) * timeScale
 
     /// How long an underdamped spring takes to stay within `epsilon` of
     /// its target (the envelope of the step response, as in
@@ -379,6 +384,9 @@ struct TrackDetailOverlay: View {
     /// Recorded demo only: whether the frosted backdrop is in (it follows
     /// the hero's settle rather than the flight; see `body`).
     @State private var frosted = false
+    /// Whether the heroes are clipped to the card (true once the open
+    /// flight has landed, false the instant a dismiss starts). See `heroes`.
+    @State private var heroClipped = false
 
     private var backdropAnimation: Animation? {
         if ScreenshotMode.recordsDetails {
@@ -423,12 +431,17 @@ struct TrackDetailOverlay: View {
         // Taps go through to the library while the cover settles on its row.
         .allowsHitTesting(!dismissing)
         .onChange(of: expanded) { expanded in
-            guard ScreenshotMode.recordsDetails else { return }
             if expanded {
-                DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.settle) {
-                    if self.expanded { frosted = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.openSettle) {
+                    if self.expanded { heroClipped = true }
+                }
+                if ScreenshotMode.recordsDetails {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.settle) {
+                        if self.expanded { frosted = true }
+                    }
                 }
             } else {
+                heroClipped = false
                 frosted = false
             }
         }
@@ -437,7 +450,7 @@ struct TrackDetailOverlay: View {
             // Screenshot mode arrives already expanded (posed). Otherwise
             // wait one runloop so the cover has been laid out at the row's
             // frame before it flies.
-            guard !expanded else { frosted = true; return }
+            guard !expanded else { frosted = true; heroClipped = true; return }
             TrackDetailHaptics.snap.prepare()
             DispatchQueue.main.async {
                 withAnimation(TrackDetailMotion.open) {
@@ -619,10 +632,24 @@ struct TrackDetailOverlay: View {
 
     // MARK: Heroes
 
-    /// The covers, one per page, drawn over the card and clipped to the
-    /// card's width — so a cover paging out is cut at the card's edge like
-    /// the content under it, while the current cover can still fly up and
-    /// down to its row.
+    /// The covers, one per page, drawn over the card. Clipped to the
+    /// card's width always — so a cover paging out is cut at the card's
+    /// edge like the content under it — and to the card's full bounds
+    /// once the open flight has landed (`heroClipped`), released the
+    /// instant a dismiss starts so the current cover can fly down to its
+    /// row. The clip is never animated: it must be there or not, never
+    /// half-way across a flying cover.
+    ///
+    /// Clipping to the card is also what makes the covers move in the CI
+    /// recordings. The hero group is otherwise screen-sized and overlaps
+    /// the frosted backdrop; on the software-rendered CI simulator the
+    /// material re-renders behind every change to that region and the
+    /// covers' sideways motion was dropped wholesale — they jumped to the
+    /// swipe's end point while the strip's text (inside the opaque card)
+    /// tweened — in three recordings with three different animation
+    /// wirings (runs 37260289707, 37261598128, 37262716674). The open
+    /// flight, which the recorded scenes run with the frost off, always
+    /// animated.
     private var heroes: some View {
         ZStack {
             ForEach(pages) { page in
@@ -632,9 +659,32 @@ struct TrackDetailOverlay: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .mask {
-            Rectangle().padding(.horizontal, stripFrame.width > 0 ? stripFrame.minX : 0)
+            GeometryReader { geometry in
+                let clip = heroClip(in: geometry.size)
+                Rectangle()
+                    .frame(width: clip.width, height: clip.height)
+                    .position(x: clip.midX, y: clip.midY)
+            }
+            .transaction { $0.animation = nil }
         }
         .allowsHitTesting(false)
+    }
+
+    /// The card's frame in the card container's space (the strip plus its
+    /// insets), or the full width before the strip has been measured.
+    private func heroClip(in size: CGSize) -> CGRect {
+        guard stripFrame.width > 0 else {
+            return CGRect(origin: .zero, size: size)
+        }
+        if heroClipped {
+            return CGRect(
+                x: stripFrame.minX,
+                y: stripFrame.minY - stripTopInset,
+                width: stripFrame.width,
+                height: stripFrame.height + stripTopInset + stripBottomInset
+            )
+        }
+        return CGRect(x: stripFrame.minX, y: 0, width: stripFrame.width, height: size.height)
     }
 
     /// A page's hero: the artwork, drawn at the row's 48pt frame while
