@@ -637,18 +637,28 @@ struct TrackDetailOverlay: View {
     /// between the two. It is laid out at slot size and scaled, so the
     /// image never re-lays-out mid-flight; the corner radius reads 8pt
     /// small and 28pt large. The slot is placed from the strip's fixed
-    /// bottom edge plus the page's shift, so it rides along while paging.
-    /// The container carries `dragOffset`, so the collapsed target
-    /// compensates to land on the row wherever the card was let go. With
-    /// no row to land on (paged to a track whose row is off screen) the
-    /// cover shrinks and fades in place instead.
+    /// bottom edge. The container carries `dragOffset`, so the collapsed
+    /// target compensates to land on the row wherever the card was let
+    /// go. With no row to land on (paged to a track whose row is off
+    /// screen) the cover shrinks and fades in place instead.
+    ///
+    /// The page shift is applied *outside* the `expanded` value animation,
+    /// as a separate `.offset`. `.animation(_:value:)` animates its
+    /// subtree only when its value changes — everything else under it
+    /// renders un-animated — so with the shift folded into `.position`
+    /// the covers ignored the drag and the `page(to:)` spring: they
+    /// jumped to the finger's end point as the swipe began and snapped
+    /// to centre at commit while the text under them was still sliding
+    /// (osebo, 2026-10-05). Out here the offset rides the gesture 1:1 and
+    /// the `withAnimation(TrackDetailMotion.page)` transaction, like the
+    /// strip's own offset does.
     private func hero(for page: Page) -> some View {
         let track = page.track
         let slot = slotFrames[track.id]
             ?? CGRect(x: (stripFrame.width - 250) / 2, y: 0, width: 250, height: 250)
         let pageHeight = pageHeights[track.id] ?? slot.maxY
         let slotFrame = CGRect(
-            x: stripFrame.minX + slot.minX + pageShift(page),
+            x: stripFrame.minX + slot.minX,
             y: stripFrame.maxY - (pageHeight - slot.minY),
             width: slot.width,
             height: slot.height
@@ -667,6 +677,9 @@ struct TrackDetailOverlay: View {
             .position(x: target.midX, y: flies ? target.midY - dragOffset : target.midY)
             .opacity(flies && !hasSource ? 0 : 1)
             .animation(expanded ? TrackDetailMotion.open : TrackDetailMotion.close, value: expanded)
+            // Paging shift: outside the value animation (see above). Zero
+            // for the current page at rest, so the fly-back is unaffected.
+            .offset(x: pageShift(page))
     }
 
     // MARK: Chrome
