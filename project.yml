@@ -11,6 +11,8 @@ targets:
   EveningsBroadcaster:
     type: application
     platform: iOS
+    # Shared scheme so CI can archive without Xcode auto-creating one.
+    scheme: {}
     sources:
       - Sources
     dependencies:
