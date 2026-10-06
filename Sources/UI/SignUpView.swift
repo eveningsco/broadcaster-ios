@@ -22,7 +22,7 @@ struct SignUpView: View {
         case confirmPassword
     }
 
-    /// Same floors as sol-api-server's signupSchema (Joi).
+    /// Same floors as the API's sign-up validation.
     static let minimumStationNameLength = 4
     static let minimumPasswordLength = 8
 

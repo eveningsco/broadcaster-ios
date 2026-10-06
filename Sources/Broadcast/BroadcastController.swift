@@ -43,10 +43,9 @@ enum BroadcastState: Equatable {
 
 /// Owns the capture -> encode -> RTMP pipeline and its reconnection loop.
 ///
-/// The media server has zero reconnect tolerance today: every TCP drop ends the
-/// server-side session (finalizing a recording), and a half-open socket can make
-/// re-publishes fail with "already publishing" until the server reaps it. So the
-/// client keeps retrying with backoff until the key frees up.
+/// Every TCP drop ends the server-side session (finalizing a recording), so the
+/// client keeps retrying with backoff until it's back on air. A new publish with
+/// the same key takes over a half-open stale session on the server.
 @MainActor
 final class BroadcastController: ObservableObject {
     @Published private(set) var state: BroadcastState = .idle

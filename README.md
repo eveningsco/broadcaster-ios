@@ -1,29 +1,51 @@
 # Evenings Broadcaster (iOS)
 
 Native Swift iOS app for broadcasting live audio to the Evenings platform.
-MVP scope: log in, capture the active audio input (built-in mic or a connected
-USB/Lightning interface), and publish AAC over RTMP to the media server, with
-automatic reconnection and background streaming.
+Log in or create a station, capture the active audio input (built-in mic or a
+connected USB/Lightning interface), and either go live (AAC over RTMP to the
+media server, with automatic reconnection and background streaming) or record
+offline and upload to your library. The app also browses your library and the
+platform's Explore feed, plays tracks, and trims or re-speeds them.
 
 ## Architecture
 
 ```
 Sources/
-  BroadcasterApp.swift      SwiftUI entry point
-  AppModel.swift            Session state: login/sign-up, token refresh, Keychain persistence
-  Config.swift              API + RTMP endpoints, bitrate
+  BroadcasterApp.swift        SwiftUI entry point
+  AppModel.swift              Session state: login/sign-up, token refresh, Keychain
+                              persistence, library and explore paging
+  Config.swift                API, web, RTMP and media endpoints; bitrate; brand colors
   API/
-    EveningsAPI.swift       /auth/signup, /v1/devices/connect, /refresh, library/explore
-    Keychain.swift          Credentials storage (kSecClassGenericPassword)
+    EveningsAPI.swift         Evenings API client (auth, devices, library, explore,
+                              tracks, uploads) and response models
+    Keychain.swift            Device session storage (kSecClassGenericPassword)
   Broadcast/
-    BroadcastController.swift  AVAudioEngine capture -> HaishinKit RTMP publish,
-                               level metering, reconnect loop with backoff
+    BroadcastController.swift AVAudioEngine capture -> HaishinKit RTMP publish,
+                              level metering, reconnect loop with backoff
+    StreamAudioConformer.swift Converts capture to the 48 kHz shape the AAC encoder needs
+    TrackPlayer.swift         AVPlayer playback with Now Playing / lock-screen controls
+    WaveformLoader.swift      Coarse waveform for the mini player
+  Recording/
+    RecordingController.swift Offline recording to .m4a in Documents/recordings
+    AACBufferWriter.swift     PCM -> AAC file writer (handles >48 kHz inputs)
+    Faststart.swift           Moves the moov atom up front so the server can read duration
+    UploadManager.swift       Uploads recordings (POST /v1/tracks); keeps failed ones as drafts
   UI/
-    LoginView.swift         Sign-in; pushes SignUpView
-    SignUpView.swift        Account creation (same form + rules as the website's /signup)
-    AuthComponents.swift    Header, field style, primary button shared by the two
-    AccountView.swift       Account sheet (station photo, name, sign out) from the header gear
-    BroadcastView.swift     Go Live / End, elapsed time, listener count, level meter
+    HomeView.swift            Library card over the broadcast stage, tabs, mini player
+    BroadcastView.swift       The stage: Go Live / Record, timer, listener count, level ring
+    LibraryView.swift         Your tracks and saved tracks
+    ExploreView.swift         Live channels and published tracks across the platform
+    TrackDetailView.swift     Track detail card (cover, scrubber, share, edit)
+    AudioEditView.swift       Combined trim + tempo editor
+    TrimEditView.swift        Trim editor
+    TempoEditView.swift       Varispeed (tempo) editor
+    LoginView.swift           Sign-in; pushes SignUpView
+    SignUpView.swift          Account creation (same form + rules as the website's /signup)
+    AuthComponents.swift      Header, field style, primary button shared by the two
+    AccountView.swift         Account sheet (station photo, name, sign out)
+    Typography.swift          ABC Social with Dynamic Type
+  Debug/
+    ScreenshotMode.swift      Debug-only fixture scenes for CI screenshots
 ```
 
 - **Auth**: `POST /v1/devices/connect` with the phone's vendor ID; JWT (1h) +
@@ -42,29 +64,19 @@ Sources/
 - **Background**: `UIBackgroundModes: [audio]` keeps the stream alive when the
   phone locks.
 
-## Reconnection (important)
+## Reconnection
 
-The media server (`simple-media-server`) currently has **zero reconnect
-tolerance**:
+A dropped connection ends the server-side broadcast session, and the media
+server saves what it received as a recording. The app reconnects on its own
+with capped exponential backoff (1s → 10s), retrying until it gets back on
+air or the broadcaster ends the broadcast.
 
-- Any TCP drop immediately ends the server-side session, finalizes the
-  recording as a Track, and may flip the channel to dead-air. Each
-  drop/reconnect cycle produces a **separate recording** in the library.
-- A half-open dead socket can cause fast re-publishes to be rejected with
-  "Stream already publishing" until the server reaps the stale session (its
-  60s ping timeout tries to keep connections alive rather than kill them).
-
-The app therefore retries with capped exponential backoff (1s → 10s)
-indefinitely until the key frees up. Planned server-side fixes that would make
-mobile broadcasting much better:
-
-1. **Publish takeover**: a new publish with a valid key kicks a stale session
-   instead of being rejected.
-2. **Reconnect grace window**: delay finalization ~30s after a dirty disconnect
-   and resume the same recording session if the same key re-publishes.
-
-Also note the media server is plain RTMP on 1935 (no TLS termination in the
-server itself).
+- **Stale connections don't block reconnects.** If the old connection is
+  still half-open on the server, a new publish with the same stream key takes
+  over the stream instead of being rejected.
+- **Each reconnect currently starts a new recording**, so a broadcast with
+  network drops shows up as several tracks in the library. A server-side
+  grace window that resumes the same recording after a brief drop is planned.
 
 ## Building
 
@@ -136,8 +148,8 @@ When you add a view or move code between views, update
 
 The workflow file is a thin wrapper; the actual steps (select Xcode, XcodeGen,
 `xcodebuild`, capture) live in `scripts/ci/simulator-screenshots-job.sh` so
-they can be changed without touching `.github/workflows/` (the forum agent's
-token lacks the `workflow` scope). `scripts/ci/simulator-screenshots.yml` is
+they can be changed without touching `.github/workflows/` (useful for tokens
+without the `workflow` scope). `scripts/ci/simulator-screenshots.yml` is
 the source copy of the workflow — `cp` it over `.github/workflows/` when it
 changes. **Xcode 26 is required**: HaishinKit 2.2+ uses
 `kVTCompressionPropertyKey_VariableBitRate` (iOS 26 SDK), so the job script
@@ -180,13 +192,12 @@ reference captures and `docs/videos/` reference recordings
 (`edit-demo.{mp4,gif}`: the combined audio editor in motion, CI run
 37180113601, 2026-10-04).
 
-## Not yet implemented (post-MVP)
+## Not yet implemented
 
-- Library screen (`GET /v1/library`) and post-broadcast "recording saved" flow
 - Live metadata editing (`PUT /v1/streams/:slug/live`)
-- Local file streaming (document picker)
+- Streaming a local file (document picker)
 - App-audio capture (ReplayKit broadcast upload extension)
-- RTMPS (needs server-side TLS termination first)
+- RTMPS: needs TLS support on the media server first
 
 ## License
 

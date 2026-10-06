@@ -6,16 +6,15 @@ recording ends up in the same library list as broadcast recordings.
 
 ## Why this is cheap: what already exists
 
-Verified against the codebases (nothing here is speculative):
+What the Evenings API already provides:
 
-- **Upload endpoint**: `POST /v1/tracks` accepts multipart with field name
-  **`audio`** (`sol-api-server/src/middleware/multer.js:54`), streams straight
-  to S3 (`tracks/<timestamp><ext>`), and works with the device JWT
-  (`authUploadTokenOrApiKeyOrUser`).
-- **Duration is computed server-side** via ffprobe on the uploaded S3 object
-  (`controllers/tracks.js:51`) — so uploaded tracks pass the library's
-  `duration != null` visibility filter immediately. No webhook dance needed.
-- **Title = uploaded filename** (`file.originalname`). `PATCH /v1/tracks/:id`
+- **Upload endpoint**: `POST /v1/tracks` accepts a multipart upload with the
+  file in the **`audio`** field, stores it, and works with the device session
+  the app already holds.
+- **Duration is computed server-side** from the uploaded file, so uploaded
+  tracks appear in the library (which hides tracks without a duration) as soon
+  as the upload finishes. No callback needed.
+- **Title = uploaded filename**. `PATCH /v1/tracks/:id`
   exists for renaming, so the app uploads with a real filename then PATCHes a
   clean display title.
 - The app already has: the capture pipeline (AVAudioEngine tap, already
@@ -27,7 +26,7 @@ Verified against the codebases (nothing here is speculative):
 **AAC in .m4a (MPEG-4), 48 kHz, 192 kbps, `AVAudioFile` writing from the
 existing tap.** iOS has no MP3 encoder (LAME would add licensing/build
 complexity); AAC-m4a is hardware-encoded, plays everywhere the platform plays
-audio (AVPlayer, HTML5 `<audio>`), and ffprobe reads its duration fine. This
+audio (AVPlayer, HTML5 `<audio>`), and the server reads its duration fine. This
 matches the broadcast encode settings (AAC 192k/48k) rather than the desktop
 app's local MP3 256k.
 
