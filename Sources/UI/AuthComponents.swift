@@ -5,10 +5,9 @@ import SwiftUI
 /// soft-fill fields, and the primary button that turns brand red once it
 /// can be pressed.
 
-/// The Evenings starburst (the website's logo, `sol-logo.svg` in
-/// sol-frontend) over the wordmark and a one-line subtitle. The asset is a
-/// template so it takes the label colour — white in the dark-only app, the
-/// same as it renders on evenings.fm.
+/// The Evenings starburst (the website's logo) over the wordmark and a
+/// one-line subtitle. The asset is a template so it takes the label colour —
+/// white in the dark-only app, the same as it renders on evenings.fm.
 struct AuthHeader: View {
     let subtitle: String
 
