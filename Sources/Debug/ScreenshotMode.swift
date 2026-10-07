@@ -11,7 +11,7 @@ import SwiftUI
 ///
 /// Inert in Release builds and whenever the argument is absent. Driven by
 /// scripts/simulator-screenshots.sh and the "Simulator Screenshots" GitHub
-/// Actions workflow (see README → Screenshots).
+/// Actions workflow (see docs/screenshots.md).
 enum ScreenshotMode {
     enum Scene: String, CaseIterable {
         /// Signed out: the sign-in form.
