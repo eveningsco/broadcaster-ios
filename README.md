@@ -96,19 +96,38 @@ capture on a real device.
 
 ## TestFlight builds
 
-`.github/workflows/testflight.yml` archives the app on a macOS runner and
-uploads it to TestFlight. It only runs when started by hand: Actions tab →
-**TestFlight** → **Run workflow** (pick the branch), or
-`gh workflow run testflight.yml --ref <branch>`. Build numbers come from the
-run number, so they always increase. One-time setup:
+Nobody needs a Mac to try a branch on a phone either: the **TestFlight**
+workflow (`.github/workflows/testflight.yml`, source copy in
+`scripts/ci/testflight.yml`) archives the app on a macOS runner and uploads it
+to App Store Connect. Any branch can be uploaded. It only runs when started by
+hand:
+
+```sh
+GH_TOKEN=... scripts/testflight.sh                 # current branch
+GH_TOKEN=... scripts/testflight.sh thread/abc123   # a specific branch
+# or: Actions tab → TestFlight → Run workflow → pick the branch
+```
+
+The run takes ~15 min, Apple processes the build for another ~5–15 min, then
+the TestFlight app on the phone shows the new build (Evenings → **Previous
+Builds** lists all of them; the build number is `100 + run number`, and the
+run's summary says which branch/sha it came from). Build numbers always
+increase, so a `main` build uploaded after a thread build is "newer" even if
+its code is older — check the summary, not the number.
+
+One-time setup:
 
 1. App Store Connect → Users and Access → Integrations → App Store Connect API:
    create a key with the **Admin** role (needed for cloud-managed signing).
-2. Add repo secrets `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_KEY_P8` (the full
-   contents of the downloaded `.p8`).
+   Note the Key ID and Issuer ID and download the `.p8` (one download only).
+2. GitHub → Settings → Environments → **New environment** `testflight`. Add
+   three environment secrets: `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_KEY_P8`
+   (the full contents of the `.p8`). Don't restrict deployment branches to
+   `main`, or thread branches can't be uploaded; a required reviewer is fine
+   (approving is one tap in the GitHub app).
 3. In TestFlight, add yourself to an internal testing group with automatic
    distribution on; new builds then show up in the TestFlight app once
-   processed (~5–15 min after the run finishes).
+   processed.
 
 ## Screenshots
 
