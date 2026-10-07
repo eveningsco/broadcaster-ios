@@ -1,206 +1,109 @@
-# Evenings Broadcaster (iOS)
+# Evenings Broadcaster for iOS
 
-Native Swift iOS app for broadcasting live audio to the Evenings platform.
-Log in or create a station, capture the active audio input (built-in mic or a
-connected USB/Lightning interface), and either go live (AAC over RTMP to the
-media server, with automatic reconnection and background streaming) or record
-offline and upload to your library. The app also browses your library and the
-platform's Explore feed, plays tracks, and trims or re-speeds them.
+The Evenings app for iPhone. We built it so a station can go live from wherever it is: plug in an audio interface or use the phone's own microphone, press **Go Live**, and the broadcast reaches your listeners on [evenings.fm](https://evenings.fm) like any other show.
 
-## Architecture
+With it, you can:
 
-```
-Sources/
-  BroadcasterApp.swift        SwiftUI entry point
-  AppModel.swift              Session state: login/sign-up, token refresh, Keychain
-                              persistence, library and explore paging
-  Config.swift                API, web, RTMP and media endpoints; bitrate; brand colors
-  API/
-    EveningsAPI.swift         Evenings API client (auth, devices, library, explore,
-                              tracks, uploads) and response models
-    Keychain.swift            Device session storage (kSecClassGenericPassword)
-  Broadcast/
-    BroadcastController.swift AVAudioEngine capture -> HaishinKit RTMP publish,
-                              level metering, reconnect loop with backoff
-    StreamAudioConformer.swift Converts capture to the 48 kHz shape the AAC encoder needs
-    TrackPlayer.swift         AVPlayer playback with Now Playing / lock-screen controls
-    WaveformLoader.swift      Coarse waveform for the mini player
-  Recording/
-    RecordingController.swift Offline recording to .m4a in Documents/recordings
-    AACBufferWriter.swift     PCM -> AAC file writer (handles >48 kHz inputs)
-    Faststart.swift           Moves the moov atom up front so the server can read duration
-    UploadManager.swift       Uploads recordings (POST /v1/tracks); keeps failed ones as drafts
-  UI/
-    HomeView.swift            Library card over the broadcast stage, tabs, mini player
-    BroadcastView.swift       The stage: Go Live / Record, timer, listener count, level ring
-    LibraryView.swift         Your tracks and saved tracks
-    ExploreView.swift         Live channels and published tracks across the platform
-    TrackDetailView.swift     Track detail card (cover, scrubber, share, edit)
-    AudioEditView.swift       Combined trim + tempo editor
-    TrimEditView.swift        Trim editor
-    TempoEditView.swift       Varispeed (tempo) editor
-    LoginView.swift           Sign-in; pushes SignUpView
-    SignUpView.swift          Account creation (same form + rules as the website's /signup)
-    AuthComponents.swift      Header, field style, primary button shared by the two
-    AccountView.swift         Account sheet (station photo, name, sign out)
-    Typography.swift          ABC Social with Dynamic Type
-  Debug/
-    ScreenshotMode.swift      Debug-only fixture scenes for CI screenshots
-```
+- **Go live** over RTMP from the built-in mic or a connected USB/Lightning interface, and keep broadcasting with the phone locked.
+- **Record** a show offline and upload it to your library once you're back online.
+- **Browse** your library and the Explore feed of live channels and published shows across Evenings.
+- **Edit** your tracks: trim them, or change their tempo.
 
-- **Auth**: `POST /v1/devices/connect` with the phone's vendor ID; JWT (1h) +
-  refresh token (28d) + stream key stored in the Keychain. Sign-up calls the
-  website's `POST /auth/signup` (email, stationName, password) and then
-  `/v1/devices/connect` with the same credentials, so a new account ends up
-  with the same device session a login produces. The connect/refresh
-  responses include `channelId` and `station {id, slug, name, image}` (added to
-  the API server alongside this app; decoded optionally, and the account sheet
-  falls back to the station on your own library tracks until it is deployed).
-- **Capture**: `AVAudioSession` (.playAndRecord, 48 kHz preferred) +
-  `AVAudioEngine` input tap. External interfaces show up as the active input
-  route automatically. The same tap feeds the RMS level meter.
-- **Encode/transport**: HaishinKit RTMPStream, AAC 192 kbps — matching the
-  desktop broadcaster's FFmpeg settings, so the media server sees no difference.
-- **Background**: `UIBackgroundModes: [audio]` keeps the stream alive when the
-  phone locks.
-
-## Reconnection
-
-A dropped connection ends the server-side broadcast session, and the media
-server saves what it received as a recording. The app reconnects on its own
-with capped exponential backoff (1s → 10s), retrying until it gets back on
-air or the broadcaster ends the broadcast.
-
-- **Stale connections don't block reconnects.** If the old connection is
-  still half-open on the server, a new publish with the same stream key takes
-  over the stream instead of being rejected.
-- **Each reconnect currently starts a new recording**, so a broadcast with
-  network drops shows up as several tracks in the library. A server-side
-  grace window that resumes the same recording after a brief drop is planned.
+It's a native Swift and SwiftUI app, and it streams through [HaishinKit](https://github.com/HaishinKit/HaishinKit.swift).
 
 ## Building
 
-Requires Xcode 26+ (HaishinKit 2.2+ needs it) and
-[XcodeGen](https://github.com/yonaskolb/XcodeGen).
+You'll need Xcode 26 or later and [XcodeGen](https://github.com/yonaskolb/XcodeGen). The app runs on iOS 16 and up.
 
 ```sh
 xcodegen generate
 open EveningsBroadcaster.xcodeproj
 ```
 
-Dependencies resolve via Swift Package Manager on first build. HaishinKit is
-pinned to an exact version in `project.yml`; to upgrade, change
-`exactVersion` there and run `xcodegen generate`.
-Simulator builds work but the simulator's mic pipeline is unreliable — test
-capture on a real device.
+Swift Package Manager resolves dependencies on the first build. HaishinKit is pinned to an exact version in `project.yml`; to upgrade it, change `exactVersion` there and run `xcodegen generate` again. Xcode 26 is a hard requirement, because HaishinKit 2.2+ uses an iOS 26 SDK API.
 
-## TestFlight builds
+Simulator builds work, but the simulator's microphone pipeline is unreliable, so test capture on a real device. We learned that one the hard way.
 
-`.github/workflows/testflight.yml` archives the app on a macOS runner and
-uploads it to TestFlight. It only runs when started by hand: Actions tab →
-**TestFlight** → **Run workflow** (pick the branch), or
-`gh workflow run testflight.yml --ref <branch>`. Build numbers come from the
-run number, so they always increase. One-time setup:
+## How it works
 
-1. App Store Connect → Users and Access → Integrations → App Store Connect API:
-   create a key with the **Admin** role (needed for cloud-managed signing).
-2. Add repo secrets `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_KEY_P8` (the full
-   contents of the downloaded `.p8`).
-3. In TestFlight, add yourself to an internal testing group with automatic
-   distribution on; new builds then show up in the TestFlight app once
-   processed (~5–15 min after the run finishes).
+- **Signing in.** The app calls `POST /v1/devices/connect` with the phone's vendor ID and keeps the session in the Keychain: a one-hour access token, a 28-day refresh token, and the station's stream key. Creating an account goes through the same `POST /auth/signup` the website uses, then connects the device with those credentials, so a new station ends up with the same session a sign-in produces.
+- **Capture.** `AVAudioSession` runs in `.playAndRecord` at a preferred 48 kHz, with an `AVAudioEngine` input tap. A connected interface becomes the active input automatically, and the same tap drives the level meter.
+- **Going live.** HaishinKit publishes AAC at 192 kbps over RTMP. That matches the Evenings desktop broadcaster's settings, so the media server treats a phone like any other encoder. The `audio` background mode keeps the broadcast going when the phone locks.
+- **Recording.** Record mode writes the same 192 kbps AAC to an `.m4a` file on the phone, at up to 48 kHz, and uploads it to your library (`POST /v1/tracks`) when you stop. If the upload fails or you're offline, the file stays on the phone as a draft until it can go up.
+
+### When the connection drops
+
+A dropped connection ends the broadcast session on the server, which saves what it received as a recording. The app reconnects on its own with capped exponential backoff (1 second, then 2, 4 and 8, then every 10 seconds) until you're back on air or you end the broadcast. If the old connection is still half-open on the server, the new one takes over the stream instead of being turned away.
+
+For now, each reconnect starts a new recording, so a show with network drops lands in your library as several tracks. That's not what anyone wants from a bad signal, so a server-side grace window that resumes the same recording after a short drop is on our list.
+
+## Project layout
+
+```
+Sources/
+  BroadcasterApp.swift         SwiftUI entry point
+  AppModel.swift               Session state: sign-in and sign-up, token refresh,
+                               Keychain persistence, library and Explore paging
+  Config.swift                 API, web, RTMP and media endpoints; bitrate; brand colors
+  API/
+    EveningsAPI.swift          Evenings API client and response models
+    Keychain.swift             Device session storage
+  Broadcast/
+    BroadcastController.swift  Capture → HaishinKit RTMP publish, level metering,
+                               reconnect loop with backoff
+    StreamAudioConformer.swift Converts capture to the 48 kHz shape the AAC encoder needs
+    TrackPlayer.swift          Playback with lock-screen controls
+    WaveformLoader.swift       Waveforms for the mini player
+  Recording/
+    RecordingController.swift  Offline recording to .m4a
+    AACBufferWriter.swift      PCM → AAC file writer (handles inputs above 48 kHz)
+    Faststart.swift            Moves the moov atom up front so the server can read duration
+    UploadManager.swift        Uploads recordings; keeps failed ones as drafts
+  UI/
+    HomeView.swift             Library card over the broadcast stage, tabs, mini player
+    BroadcastView.swift        The stage: Go Live and Record, timer, listener count, level ring
+    LibraryView.swift          Your tracks and the ones you've saved
+    ExploreView.swift          Live channels and published tracks across Evenings
+    TrackDetailView.swift      Track detail card (cover, scrubber, share, edit)
+    AudioEditView.swift        Trim and tempo editor
+    TrimEditView.swift         Trim
+    TempoEditView.swift        Tempo (varispeed)
+    LoginView.swift            Sign-in
+    SignUpView.swift           Account creation, with the website's rules
+    AuthComponents.swift       Pieces shared by sign-in and sign-up
+    AccountView.swift          Account sheet (station photo, name, sign out)
+    Typography.swift           ABC Social with Dynamic Type
+  Debug/
+    ScreenshotMode.swift       Debug-only fixture scenes for screenshots
+```
 
 ## Screenshots
 
-Nobody needs a Mac to see the UI: the **Simulator Screenshots** GitHub Actions
-workflow builds the app on a macOS runner, boots an iPhone simulator and
-captures every screen to a PNG artifact.
+You can see every screen without a Mac: a GitHub Actions workflow builds the app, runs it in a simulator, and captures each scene, including short recordings of the editor and track card in motion. [docs/screenshots.md](docs/screenshots.md) covers how to start a run, the scene list, and how we keep macOS build minutes down.
 
-```sh
-# From any machine with python3 and a GitHub token with `repo` scope:
-GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch            # scenes your changes touch
-GH_TOKEN=... scripts/ci-screenshots.py --ref my-branch --dry-run  # what it would do, without doing it
-GH_TOKEN=... scripts/ci-screenshots.py --scenes "login stage"     # exactly these scenes
-# → screenshots/<scene>.png
-```
+## TestFlight builds
 
-**How often runs happen.** Every run is a macOS job (10x billing) and the
-build costs far more than the scenes (~6–12 min vs ~5–10 s per still), so
-`scripts/ci-screenshots.py` avoids starting runs:
+`.github/workflows/testflight.yml` archives the app on a macOS runner and uploads it to TestFlight. It runs only when started by hand, and only from `main`: Actions → **TestFlight** → **Run workflow**, or `gh workflow run testflight.yml --ref main`. Build numbers come from the run number, so they always increase.
 
-| Rule | What happens |
-| --- | --- |
-| Auto scenes (default) | Captures only the scenes touched by changes since the branch's last full run. Which files touch which scenes is listed in `scripts/ci/screenshot-scenes.txt`. A file that isn't listed counts as every scene. If nothing visual changed, it starts no run. |
-| Recordings opt-in | `-demo` scenes (~30–60 s each) only run when named with `--scenes`. |
-| Reuse | If a successful run of the same commit, device and appearance already covered the scenes, it downloads that run's results instead of starting a new run. |
-| Coalesce | If a run for the branch is queued or running, it waits for that run. It then starts one follow-up run for anything pushed in the meantime. The workflow's `concurrency` group enforces the same rule for runs started by hand. |
-| Throttle | At most 1 new run per branch every 15 min and 10 per branch per 24 h (`SCREENSHOTS_COOLDOWN_MIN`, `SCREENSHOTS_DAILY_MAX`). When throttled it exits with status **3**: keep working and fold the next changes into one later run. `--force` skips the throttle. |
+To set it up the first time:
 
-When you add a view or move code between views, update
-`scripts/ci/screenshot-scenes.txt`. The first matching line wins.
+1. In App Store Connect, go to Users and Access → Integrations → App Store Connect API and create a key with the **Admin** role, which cloud-managed signing needs.
+2. Add `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (the full contents of the downloaded `.p8` file) as secrets of the `testflight` environment, under Settings → Environments. `scripts/protect-branches.sh` restricts that environment to `main` and adds a required reviewer.
+3. In TestFlight, add yourself to an internal testing group with automatic distribution turned on. New builds appear in the TestFlight app once Apple has processed them, usually 5–15 minutes after the run finishes.
 
-> **Setup (once):** GitHub only knows about a `workflow_dispatch`-only
-> workflow once its file exists on the **default branch** (`main`) — until
-> then, dispatching by file name returns `404 Not Found` from the API and the
-> workflow is missing from the Actions tab. Land
-> `.github/workflows/simulator-screenshots.yml` on `main` once; after that
-> `--ref` can point at any branch that has the file.
+## What we're working on
 
-The workflow file is a thin wrapper; the actual steps (select Xcode, XcodeGen,
-`xcodebuild`, capture) live in `scripts/ci/simulator-screenshots-job.sh` so
-they can be changed without touching `.github/workflows/` (useful for tokens
-without the `workflow` scope). `scripts/ci/simulator-screenshots.yml` is
-the source copy of the workflow — `cp` it over `.github/workflows/` when it
-changes. **Xcode 26 is required**: HaishinKit 2.2+ uses
-`kVTCompressionPropertyKey_VariableBitRate` (iOS 26 SDK), so the job script
-`xcode-select`s the newest `/Applications/Xcode_26*.app` — GitHub's `macos-15`
-image defaults to Xcode 16.4, which fails to compile HaishinKit.
+We'd like the app to cover more of what stations already do from the website and the desktop. These aren't in it yet:
 
-Or trigger it by hand (Actions → Simulator Screenshots → Run workflow) and
-download the `simulator-screenshots` artifact. A cold run takes ~8–12 minutes
-(SPM resolve + build dominate); macOS minutes bill at 10x Linux, so the
-workflow is manual-only rather than running on every push.
+- Editing the title and details of a broadcast while you're live
+- Streaming a file from the phone
+- Broadcasting audio from other apps (a ReplayKit broadcast extension)
+- RTMPS, which needs TLS support on the media server first
 
-The app supports a debug-only **screenshot mode** that makes this possible:
-launching with `-screenshot <scene>` renders that scene from fixture data
-(`Sources/Debug/ScreenshotMode.swift`) with no account, network, Keychain or
-microphone involved. Scenes: `login`, `signup` (account creation), `library`,
-`explore`, `account` (the station/sign-out sheet from the header gear),
-`edit` (the trim + tempo audio editor over the library), `track` (the track
-detail card — cover, scrubber, share and Edit — floating over the library), `stage`
-(idle, "Go Live") and `live` (on air, timer). Scenes ending in `-demo`
-animate instead of posing — `edit-demo` has the editor trim, audition and
-re-speed a track by itself with a ghost fingertip; `track-demo` taps a
-track's cover so it flies out of the row into the detail card over the
-frosted library, dismisses it and repeats (at half speed, so the ~15 fps
-CI simulator catches the motion) — and the capture script
-*records* them (`simctl io recordVideo`, ~24 s) into `<scene>.mov` plus an
-animated `<scene>.png`, so `--scenes edit-demo` yields a short video of the
-editor in motion. On a Mac:
-
-```sh
-xcodegen generate
-xcodebuild -scheme EveningsBroadcaster -configuration Debug \
-  -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData \
-  CODE_SIGNING_ALLOWED=NO build
-scripts/simulator-screenshots.sh \
-  build/DerivedData/Build/Products/Debug-iphonesimulator/Evenings.app screenshots
-```
-
-The mode is compiled out of Release builds. `docs/screenshots/` holds
-reference captures and `docs/videos/` reference recordings
-(`edit-demo.{mp4,gif}`: the combined audio editor in motion, CI run
-37180113601, 2026-10-04).
-
-## Not yet implemented
-
-- Live metadata editing (`PUT /v1/streams/:slug/live`)
-- Streaming a local file (document picker)
-- App-audio capture (ReplayKit broadcast upload extension)
-- RTMPS: needs TLS support on the media server first
+We'll share more about each one once it's in stations' hands.
 
 ## License
 
-Licensed under the [MIT License](LICENSE). The license covers the source code
-only: it does not grant rights to the Evenings name, logo or app icon, and the
-bundled commercial fonts are used under their own separate licenses.
+The source code is released under the [MIT License](LICENSE). The license doesn't cover the Evenings name, logo or app icon, and the bundled commercial fonts are used under their own licenses.
+
+If the app doesn't build, or something sounds wrong on a real device, open an issue with your Xcode version and the audio interface you're using, and we'll take a look.
