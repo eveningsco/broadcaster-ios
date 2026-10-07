@@ -91,17 +91,6 @@ To set it up the first time:
 2. Add `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (the full contents of the downloaded `.p8` file) as secrets of the `testflight` environment, under Settings → Environments. `scripts/protect-branches.sh` restricts that environment to `main` and adds a required reviewer.
 3. In TestFlight, add yourself to an internal testing group with automatic distribution turned on. New builds appear in the TestFlight app once Apple has processed them, usually 5–15 minutes after the run finishes.
 
-## What we're working on
-
-We'd like the app to cover more of what stations already do from the website and the desktop. These aren't in it yet:
-
-- Editing the title and details of a broadcast while you're live
-- Streaming a file from the phone
-- Broadcasting audio from other apps (a ReplayKit broadcast extension)
-- RTMPS, which needs TLS support on the media server first
-
-We'll share more about each one once it's in stations' hands.
-
 ## License
 
 The source code is released under the [MIT License](LICENSE). The license doesn't cover the Evenings name, logo or app icon, and the bundled commercial fonts are used under their own licenses.
