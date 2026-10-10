@@ -291,13 +291,10 @@ struct HomeView: View {
                         cardTabTitle("Library", tab: .library)
                         cardTabTitle("Explore", tab: .explore)
                         Spacer(minLength: 0)
-                        // Both icons carry 44pt hit targets, so they sit
-                        // flush; the header is only a few points wider than
-                        // its content and a 16pt gap here wrapped "Library".
-                        HStack(spacing: 0) {
-                            AccountButton { showingAccount = true }
-                            LoopButton(player: model.player)
-                        }
+                        // The header is only a few points wider than its
+                        // content; keep anything added here inside the gear's
+                        // 44pt hit target or "Library" wraps.
+                        AccountButton { showingAccount = true }
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, safeArea.top + 24)
@@ -589,8 +586,7 @@ struct HomeView: View {
     }
 }
 
-/// Opens the account sheet; sits beside the loop toggle in the card header
-/// and shares its 44pt hit target and muted ink.
+/// Opens the account sheet from the card header; 44pt hit target, muted ink.
 struct AccountButton: View {
     let action: () -> Void
 
@@ -604,26 +600,6 @@ struct AccountButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Account")
-    }
-}
-
-/// Toggles looping for the currently selected track; lit in the brand red
-/// while that track loops, dimmed when nothing is loaded.
-struct LoopButton: View {
-    @ObservedObject var player: TrackPlayer
-
-    var body: some View {
-        Button {
-            player.toggleLooping()
-        } label: {
-            Image(systemName: "repeat")
-                .font(.body.weight(.medium))
-                .foregroundStyle(player.isLoopingCurrent ? Color.eveningsRed : Color(.systemGray))
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .opacity(player.playingKey == nil ? 0.4 : 1)
     }
 }
 
