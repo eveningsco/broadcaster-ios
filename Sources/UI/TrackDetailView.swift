@@ -167,11 +167,14 @@ private struct StripFrameKey: PreferenceKey {
 /// and the covers ride along in the hero layer, so the current cover
 /// slides out as its neighbour slides in; releasing past a third of the
 /// width (or flicking) commits on `TrackDetailMotion.page`, otherwise it
-/// springs back. Pages are bottom-aligned in the strip, so when a taller
-/// or shorter page lands the card grows or shrinks from its top edge and
-/// no cover moves except the ones paging. After paging, dismiss flies the
-/// cover back to the *current* track's row if that row is on screen (the
-/// resting row frames come from `HomeView`), else it shrinks away in place.
+/// springs back. Every page reserves the same height (two title lines, a
+/// byline, two description lines — see `pageContent`), so the card keeps
+/// one height and every piece one place from track to track (osebo,
+/// 2026-10-10); the strip is still bottom-aligned, so should a page ever
+/// measure differently only the card's top edge would move. After paging,
+/// dismiss flies the cover back to the *current* track's row if that row
+/// is on screen (the resting row frames come from `HomeView`), else it
+/// shrinks away in place.
 ///
 /// Dismiss by dragging the card down (tracks the finger, rubber-banded
 /// upwards; release with momentum and the cover flies back into its row) or
@@ -368,6 +371,13 @@ struct TrackDetailOverlay: View {
     /// The strip's inset from the card's top and bottom edges.
     private let stripTopInset: CGFloat = 32
     private let stripBottomInset: CGFloat = 24
+    /// Gap between a page's pieces. The page always reserves two title
+    /// lines, a byline and two description lines, so this is what keeps
+    /// the fixed-height card above the pills on a 6.1" phone.
+    private let pageSpacing: CGFloat = 20
+    private let titleFont = Font.custom("ETBembo-SemiBoldOSF", size: 30, relativeTo: .title)
+    private let bylineFont = Font.social(.body)
+    private let descriptionFont = Font.social(.subheadline)
 
     /// How far along the drag-to-dismiss is (0 at rest, 0.6 well past the
     /// commit distance); thins the backdrop's dim as the card goes. Only
@@ -555,12 +565,12 @@ struct TrackDetailOverlay: View {
             }
     }
 
-    /// The pages side by side, the current one deciding the card's height.
+    /// The pages side by side, the current one deciding the card's height
+    /// (all pages reserve the same height, so in practice it's constant).
     /// Bottom-aligned: the card is anchored to the bottom of the screen, so
-    /// a height change moves the card's top edge and nothing else — the
-    /// resting covers stay exactly where they are. Clipped to the card's
-    /// edges (not the strip's), so a taller neighbour sliding in is cut at
-    /// the card's top and the chrome's reveal rise isn't.
+    /// a height change would move the card's top edge and nothing else —
+    /// the resting covers stay exactly where they are. Clipped to the
+    /// card's edges (not the strip's), so the chrome's reveal rise isn't.
     private var strip: some View {
         ZStack(alignment: .bottom) {
             ForEach(pages) { page in
@@ -582,26 +592,22 @@ struct TrackDetailOverlay: View {
     }
 
     /// One page: heading, cover slot, description, scrubber, transport for
-    /// its track. Always its natural height (never squeezed to the strip's
-    /// animating frame) and measured, so the strip can take the current
-    /// page's height and the hero can find the slot.
+    /// its track. Every piece that varies by track reserves its full
+    /// height (see `heading` and `descriptionText`), so each page measures
+    /// the same and the card never changes height — nor does anything in
+    /// it move — between tracks (osebo, 2026-10-10). Never squeezed to the
+    /// strip's animating frame, and measured so the strip can take the
+    /// current page's height and the hero can find the slot.
     private func pageContent(_ page: Page) -> some View {
         let track = page.track
-        return VStack(spacing: 24) {
+        return VStack(spacing: pageSpacing) {
             heading(for: track)
                 .reveal(expanded, delay: TrackDetailMotion.headingDelay)
 
             coverSlot(for: track)
 
-            if let description = description(of: track) {
-                Text(description)
-                    .font(.social(.subheadline))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity)
-                    .reveal(expanded, delay: TrackDetailMotion.scrubberDelay)
-            }
+            descriptionText(for: track)
+                .reveal(expanded, delay: TrackDetailMotion.scrubberDelay)
 
             scrubber(for: track)
                 .reveal(expanded, delay: TrackDetailMotion.scrubberDelay)
@@ -697,25 +703,42 @@ struct TrackDetailOverlay: View {
 
     // MARK: Chrome
 
+    /// Title over byline. Both reserve their full height whatever the
+    /// track: two title lines (a one-line title sits on the lower one, so
+    /// it stays snug against the byline and the spare room is at the top
+    /// of the card) and one byline line, blank when the track has none.
     private func heading(for track: LibraryTrack) -> some View {
         let subtitle = byline(of: track)
         return VStack(spacing: 6) {
             Text(track.title ?? "Untitled")
-                .font(.custom("ETBembo-SemiBoldOSF", size: 30, relativeTo: .title))
+                .font(titleFont)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .minimumScaleFactor(0.8)
-            if !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(.social(.body))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(1)
-            }
+                .reservingLines(2, font: titleFont, alignment: .bottom)
+            Text(subtitle.isEmpty ? " " : subtitle)
+                .font(bylineFont)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(1)
+                .reservingLines(1, font: bylineFont, alignment: .center)
         }
         .frame(maxWidth: .infinity)
         // Keep the title clear of the owner menu in the corner.
         .padding(.horizontal, 24)
+    }
+
+    /// Up to two lines of description under the cover; the block is
+    /// always there (blank for tracks without one) so the scrubber and
+    /// transport sit at the same place on every page.
+    private func descriptionText(for track: LibraryTrack) -> some View {
+        Text(description(of: track) ?? " ")
+            .font(descriptionFont)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+            .reservingLines(2, font: descriptionFont, alignment: .top)
+            .frame(maxWidth: .infinity)
     }
 
     /// The real waveform doubling as a scrubber (flat bars until the levels
@@ -1044,5 +1067,36 @@ private struct Reveal: ViewModifier {
 private extension View {
     func reveal(_ expanded: Bool, delay: Double = 0, rise: CGFloat = 16, scale: CGFloat = 1) -> some View {
         modifier(Reveal(expanded: expanded, delay: delay, rise: rise, scale: scale))
+    }
+}
+
+// MARK: - Reserved lines
+
+/// Reserves the height of `lines` lines of `font` whatever the content —
+/// a hidden template of that many blank lines sits underneath — so text
+/// that runs one line or none takes the same room as text that fills the
+/// limit. `alignment` places shorter content within the reserved block.
+/// Used by the track detail card to keep its height and the position of
+/// every piece identical from track to track.
+private struct ReservedLines: ViewModifier {
+    let lines: Int
+    let font: Font
+    let alignment: Alignment
+
+    func body(content: Content) -> some View {
+        ZStack(alignment: alignment) {
+            Text(Array(repeating: " ", count: max(lines, 1)).joined(separator: "\n"))
+                .font(font)
+                .lineLimit(lines)
+                .hidden()
+                .accessibilityHidden(true)
+            content
+        }
+    }
+}
+
+private extension View {
+    func reservingLines(_ lines: Int, font: Font, alignment: Alignment) -> some View {
+        modifier(ReservedLines(lines: lines, font: font, alignment: alignment))
     }
 }
