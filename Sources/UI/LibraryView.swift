@@ -439,8 +439,10 @@ struct EditTrackSheet: View {
                     TextField("Title", text: $title)
                 }
                 Section("Description") {
+                    // Fixed, not a minimum: the form looks the same for
+                    // every track; long text scrolls inside the editor.
                     TextEditor(text: $details)
-                        .frame(minHeight: 120)
+                        .frame(height: 160)
                 }
                 if let saveError {
                     Section {

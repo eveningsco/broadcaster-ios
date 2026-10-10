@@ -154,10 +154,12 @@ enum ScreenshotFixtures {
     }()
 
     static let library: [LibraryTrack] = [
-        track(101, "Late Shift — Episode 48", streamedAt: "2026-10-02T21:00:00.000Z",
+        track(101, "Late Shift 48", streamedAt: "2026-10-02T21:00:00.000Z",
               duration: 2 * 3600 + 14 * 60, listens: 212, tags: ["ambient", "late-night"]),
         track(100, "Late Shift — Episode 47", streamedAt: "2026-09-25T21:00:00.000Z",
-              duration: 1 * 3600 + 58 * 60, listens: 340, tags: ["ambient"]),
+              duration: 1 * 3600 + 58 * 60, listens: 340, tags: ["ambient"],
+              description: "Two hours of slow tape loops and field recordings from the balcony, "
+                  + "with a long stretch of rain in the middle."),
         track(97, "Rain on the Line (live from the roof)", streamedAt: "2026-09-18T20:30:00.000Z",
               duration: 47 * 60, listens: 88, tags: ["field-recording"]),
         track(95, "Late Shift — Episode 46", streamedAt: "2026-09-11T21:00:00.000Z",
@@ -192,7 +194,7 @@ enum ScreenshotFixtures {
         track(2_092, "Commute Mix 09", streamedAt: "2026-10-01T07:30:00.000Z",
               duration: 42 * 60, listens: 530, tags: ["house", "morning"],
               owner: false, station: otherStation("KXRT", slug: "kxrt")),
-        track(2_087, "Late Shift — Episode 48", streamedAt: "2026-10-02T21:00:00.000Z",
+        track(2_087, "Late Shift 48", streamedAt: "2026-10-02T21:00:00.000Z",
               duration: 2 * 3600 + 14 * 60, listens: 212, tags: ["ambient", "late-night"]),
         track(2_080, "Strings & Static", streamedAt: "2026-09-29T22:00:00.000Z",
               duration: 58 * 60, listens: 141, tags: ["modern-classical"],
@@ -215,12 +217,13 @@ enum ScreenshotFixtures {
         tags: [String],
         owner: Bool = true,
         saved: Bool? = nil,
-        station: LibraryTrack.TrackStation? = nil
+        station: LibraryTrack.TrackStation? = nil,
+        description: String? = nil
     ) -> LibraryTrack {
         LibraryTrack(
             id: id,
             title: title,
-            description: nil,
+            description: description,
             location: "https://media.evenings.co/fixtures/\(id).m4a",
             image: nil,
             duration: duration,
