@@ -154,7 +154,7 @@ enum ScreenshotFixtures {
     }()
 
     static let library: [LibraryTrack] = [
-        track(101, "Late Shift — Episode 48", streamedAt: "2026-10-02T21:00:00.000Z",
+        track(101, "Late Shift 48", streamedAt: "2026-10-02T21:00:00.000Z",
               duration: 2 * 3600 + 14 * 60, listens: 212, tags: ["ambient", "late-night"]),
         track(100, "Late Shift — Episode 47", streamedAt: "2026-09-25T21:00:00.000Z",
               duration: 1 * 3600 + 58 * 60, listens: 340, tags: ["ambient"],
@@ -194,7 +194,7 @@ enum ScreenshotFixtures {
         track(2_092, "Commute Mix 09", streamedAt: "2026-10-01T07:30:00.000Z",
               duration: 42 * 60, listens: 530, tags: ["house", "morning"],
               owner: false, station: otherStation("KXRT", slug: "kxrt")),
-        track(2_087, "Late Shift — Episode 48", streamedAt: "2026-10-02T21:00:00.000Z",
+        track(2_087, "Late Shift 48", streamedAt: "2026-10-02T21:00:00.000Z",
               duration: 2 * 3600 + 14 * 60, listens: 212, tags: ["ambient", "late-night"]),
         track(2_080, "Strings & Static", streamedAt: "2026-09-29T22:00:00.000Z",
               duration: 58 * 60, listens: 141, tags: ["modern-classical"],
