@@ -26,6 +26,17 @@ final class AudioSinkBox: @unchecked Sendable {
     }
 }
 
+enum CaptureError: LocalizedError {
+    case inputNotReady
+
+    var errorDescription: String? {
+        switch self {
+        case .inputNotReady:
+            return "The audio input is still connecting. Try again in a moment."
+        }
+    }
+}
+
 enum BroadcastState: Equatable {
     case idle
     case connecting
@@ -104,8 +115,7 @@ final class BroadcastController: ObservableObject {
             Task { @MainActor in
                 guard let self, granted, !self.state.isActive, !self.isMonitoring else { return }
                 do {
-                    try self.configureAudioSession()
-                    try self.startCapture()
+                    try await self.startCaptureWithRetry()
                     self.isMonitoring = true
                 } catch {
                     self.lastError = "Microphone unavailable: \(error.localizedDescription)"
@@ -179,8 +189,7 @@ final class BroadcastController: ObservableObject {
     /// cancelled via stop().
     private func runSession() async {
         do {
-            try configureAudioSession()
-            try startCapture()
+            try await startCaptureWithRetry()
         } catch {
             lastError = "Microphone unavailable: \(error.localizedDescription)"
             stopCapture()
@@ -274,7 +283,15 @@ final class BroadcastController: ObservableObject {
     private func configureAudioSession() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth])
-        try session.setPreferredSampleRate(48_000)
+        // Prefer 48 kHz on the built-in hardware, but don't fight a USB
+        // interface's fixed rate (Luna only does 96 kHz). An unsatisfiable
+        // preference makes activation settle on the final rate in two steps,
+        // and capture starting against the in-between rate is what crashed
+        // when Luna was plugged in before launch.
+        let hasUSBInput = (session.availableInputs ?? []).contains { $0.portType == .usbAudio }
+        if !hasUSBInput {
+            try session.setPreferredSampleRate(48_000)
+        }
         // iOS silences all haptics while audio capture is active unless the
         // session opts in — without this, buttons on the stage feel dead.
         try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
@@ -282,12 +299,41 @@ final class BroadcastController: ObservableObject {
         refreshInputs()
     }
 
+    /// Configure the session and start capture, giving the route one chance
+    /// to settle first. The first activation with a USB interface attached
+    /// (plugged in before launch) can report a transitional format; rather
+    /// than crash in installTap, startCapture throws and we go again.
+    private func startCaptureWithRetry() async throws {
+        do {
+            try configureAudioSession()
+            try startCapture()
+        } catch {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            try configureAudioSession()
+            try startCapture()
+        }
+    }
+
     private func startCapture() throws {
         installObserversIfNeeded()
         // Already capturing (e.g. going live while monitoring) -- the tap stays.
         guard !engine.isRunning else { return }
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
+        var format = input.outputFormat(forBus: 0)
+        let sessionRate = AVAudioSession.sharedInstance().sampleRate
+        if format.channelCount == 0 || abs(format.sampleRate - sessionRate) > 1 {
+            // The engine caches the hardware format from when its I/O unit
+            // last came up, and a USB interface with a fixed rate (Luna runs
+            // at 96 kHz) can move the session's rate during activation.
+            // Installing a tap with the stale format raises an uncatchable
+            // CoreAudio exception instead of throwing; reset drops the cache.
+            engine.reset()
+            format = input.outputFormat(forBus: 0)
+        }
+        guard format.sampleRate > 0, format.channelCount > 0,
+              abs(format.sampleRate - sessionRate) <= 1 else {
+            throw CaptureError.inputNotReady
+        }
         let route = AVAudioSession.sharedInstance().currentRoute.inputs.first
         Self.log.info("Capture: \(route?.portName ?? "unknown", privacy: .public) \(format, privacy: .public)")
         input.removeTap(onBus: 0)
@@ -326,12 +372,18 @@ final class BroadcastController: ObservableObject {
         }
 
         // Keep the input list current as devices are plugged and unplugged.
+        // Also the retry path for a capture start that failed mid-route-change
+        // (startCapture throws on a half-configured route instead of
+        // crashing): once the route lands somewhere final, try again.
         NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification,
             object: AVAudioSession.sharedInstance(),
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.refreshInputs() }
+            Task { @MainActor in
+                self?.refreshInputs()
+                self?.recoverCaptureIfStopped()
+            }
         }
 
         // Interruptions (phone call, Siri): resume capture when they end.
@@ -352,6 +404,19 @@ final class BroadcastController: ObservableObject {
         guard shouldRun else { return }
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
+        do {
+            try configureAudioSession()
+            try startCapture()
+        } catch {
+            lastError = "Audio input interrupted: \(error.localizedDescription)"
+        }
+    }
+
+    /// Capture should be running but the engine is down (a start attempt
+    /// threw while the route was still settling): bring it back up.
+    private func recoverCaptureIfStopped() {
+        let shouldRun = isMonitoring || captureHolds > 0 || state.isActive
+        guard shouldRun, !engine.isRunning else { return }
         do {
             try configureAudioSession()
             try startCapture()
