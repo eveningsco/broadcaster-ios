@@ -13,30 +13,17 @@ enum TrackList: String {
     case explore
 }
 
-/// Which track the detail card is showing, and which list it came from.
-/// The hero id names the list too (`library-cover-12`, `explore-cover-12`)
-/// so a track present in both lists has exactly one hero source.
-/// `sourceFrame` is the current track's row cover frame in `HeroSpace`:
-/// where the card's cover flies out from and back to. It is the tapped
-/// cover's frame at tap time; after paging it is re-resolved from the
-/// rows on screen, and `.zero` when the current track's row isn't visible
-/// (the cover then shrinks away in place on dismiss).
+/// Which track the detail card is showing, and which list it pages
+/// through (the one the playing track was found in; library first).
+/// `sourceFrame` is the mini player's cover frame in global (screen)
+/// coordinates: where the card's cover flies out from and back to. It is that cover's frame
+/// at tap time; after paging it is re-resolved on dismiss, and `.zero`
+/// when the current track isn't the one in the player (the cover then
+/// shrinks away in place).
 struct TrackDetailSelection: Equatable {
     var track: LibraryTrack
     let list: TrackList
     var sourceFrame: CGRect = .zero
-
-    var heroID: String { Self.heroID(list: list, track: track) }
-
-    static func heroID(list: TrackList, track: LibraryTrack) -> String {
-        "\(list.rawValue)-cover-\(track.id)"
-    }
-}
-
-/// The coordinate space the hero flies in: `HomeView`'s full-screen ZStack,
-/// which hosts both the lists and the detail overlay.
-enum HeroSpace {
-    static let name = "hero"
 }
 
 /// One set of curves for everything that moves with the detail card — the
@@ -71,7 +58,7 @@ enum TrackDetailMotion {
     static let snapBack = Animation.spring(response: 0.35, dampingFraction: 0.82)
     /// When the overlay can be removed after `close` starts (no
     /// animation-completion hook before iOS 17): the spring's settling
-    /// time, so the cover is at rest on its row — not a hand-picked
+    /// time, so the cover is at rest in the player — not a hand-picked
     /// number that drifts when the spring is retuned. Removing the overlay
     /// early snapped the cover the last pixel or two (osebo, 2026-10-05).
     static let settle: TimeInterval = settlingTime(response: closeResponse, dampingFraction: closeDamping) * timeScale
@@ -100,10 +87,14 @@ enum TrackDetailMotion {
     static let rightPillDelay: Double = 0.16 * timeScale
 }
 
-/// Frames (in `HeroSpace`) of the list covers that can grow into the detail
-/// card, keyed by hero id (plus the library card's own frames under
-/// `HomeFrames` keys). Rows publish their own; `HomeView` keeps the resting
-/// set for the fly-back after paging and the `track-demo` fingertip.
+/// Frames of the home layer's covers that can grow into the detail card,
+/// keyed by `HomeFrames` key: today just the mini player's cover. Global
+/// (screen) coordinates: the overlay converts into its own space with its
+/// measured origin, so it doesn't matter how the home ZStack and the
+/// overlay line up (a named space on the ZStack had its origin at the top
+/// safe-area line while the overlay's was at the screen top, and the
+/// fly-back landed 62pt high — osebo, 2026-10-05). `HomeView` keeps the
+/// resting set for the fly-back and the `track-demo` fingertip.
 struct CoverFramesKey: PreferenceKey {
     static var defaultValue: [String: CGRect] = [:]
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
@@ -121,6 +112,14 @@ private struct SlotFramesKey: PreferenceKey {
 }
 
 /// Natural height of each page's content, by track id.
+/// The overlay's origin in global coordinates (see `screenOrigin`).
+private struct ScreenOriginKey: PreferenceKey {
+    static var defaultValue: CGPoint = .zero
+    static func reduce(value: inout CGPoint, nextValue: () -> CGPoint) {
+        value = nextValue()
+    }
+}
+
 private struct PageHeightsKey: PreferenceKey {
     static var defaultValue: [Int: CGFloat] = [:]
     static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
@@ -137,13 +136,16 @@ private struct StripFrameKey: PreferenceKey {
     }
 }
 
-/// The track detail card, opened by tapping a track's cover in the Library
-/// or Explore list. Not a sheet: the 48pt artwork lifts out of its row and
-/// grows into the card's cover while the card's chrome fades in around it
-/// and the home layer dims and scales back behind.
+/// The track detail card, opened by tapping the playing track's cover in
+/// the mini player at the bottom of the home screen (osebo, 2026-10-05;
+/// it used to open from the list rows' covers, which now just play the
+/// track like the rest of the row). Not a sheet: the 40pt artwork lifts
+/// out of the player and grows into the card's cover while the card's
+/// chrome fades in around it and the home layer dims and scales back
+/// behind.
 ///
 /// The hero is done by hand rather than with `matchedGeometryEffect`: the
-/// row reports its cover's frame (`TrackDetailSelection.sourceFrame`), the
+/// player reports its cover's frame (`TrackDetailSelection.sourceFrame`), the
 /// card lays out an empty slot where the cover goes, and `hero(for:)` draws
 /// the artwork at whichever of the two frames `expanded` picks, with a
 /// value-based spring between them. (Toggling `isSource` on two mounted
@@ -162,7 +164,7 @@ private struct StripFrameKey: PreferenceKey {
 /// from a `…` in the card's corner.
 ///
 /// Swipe sideways to page to the next / previous track in the list the
-/// card opened from (osebo, 2026-10-05). The card's content is a strip of
+/// playing track belongs to (osebo, 2026-10-05). The card's content is a strip of
 /// up to three pages — previous, current, next — that follows the finger,
 /// and the covers ride along in the hero layer, so the current cover
 /// slides out as its neighbour slides in; releasing past a third of the
@@ -170,11 +172,12 @@ private struct StripFrameKey: PreferenceKey {
 /// springs back. Pages are bottom-aligned in the strip, so when a taller
 /// or shorter page lands the card grows or shrinks from its top edge and
 /// no cover moves except the ones paging. After paging, dismiss flies the
-/// cover back to the *current* track's row if that row is on screen (the
-/// resting row frames come from `HomeView`), else it shrinks away in place.
+/// cover back into the mini player only if the *current* track is still
+/// the one in the player (the player's resting frame comes from
+/// `HomeView`), else it shrinks away in place.
 ///
 /// Dismiss by dragging the card down (tracks the finger, rubber-banded
-/// upwards; release with momentum and the cover flies back into its row) or
+/// upwards; release with momentum and the cover flies back into the player) or
 /// by tapping the backdrop. One drag gesture serves both: its first
 /// movement locks it to the vertical (dismiss) or horizontal (page) lane.
 /// While dragging only cheap things change: the container's offset or the
@@ -190,21 +193,21 @@ private struct StripFrameKey: PreferenceKey {
 struct TrackDetailOverlay: View {
     @EnvironmentObject private var model: AppModel
     /// Owned by `HomeView` (`detail`): the track changes as the card pages,
-    /// so the rows' `coverHidden` follows the page.
+    /// so the mini player's `coverHidden` follows the page.
     @Binding var selection: TrackDetailSelection
     @ObservedObject var player: TrackPlayer
-    /// True once the cover has flown out of its row; flipped back on
+    /// True once the cover has flown out of the player; flipped back on
     /// dismiss to fly it home. Owned by `HomeView` (it drives the home
-    /// layer's recession). The row's own cover stays hidden for as long as
-    /// the overlay is mounted — not just while expanded — so there is one
-    /// visible cover throughout; the row's reappears under the hero only
-    /// when `onDismiss` removes the overlay.
+    /// layer's recession). The player's own cover stays hidden for as long
+    /// as the overlay is mounted — not just while expanded — so there is
+    /// one visible cover throughout; the player's reappears under the hero
+    /// only when `onDismiss` removes the overlay.
     @Binding var expanded: Bool
     let safeArea: EdgeInsets
-    /// The resting frame (in `HeroSpace`) of a list row's cover, by hero
-    /// id, if that row is fully in view — the fly-back target after paging.
-    /// Nil means "shrink away instead".
-    var rowFrame: (String) -> CGRect? = { _ in nil }
+    /// The resting frame (global coordinates) of the mini player's cover,
+    /// if the player is showing — the fly-back target for the player's
+    /// track. Nil means "shrink away instead".
+    var playerFrame: () -> CGRect? = { nil }
     /// Called once the fly-back animation has finished; removes the overlay.
     let onDismiss: () -> Void
 
@@ -223,9 +226,14 @@ struct TrackDetailOverlay: View {
     /// Horizontal shift of the page strip (and the covers) while paging.
     @State private var pageDrag: CGFloat = 0
     @State private var dismissing = false
-    /// The tapped track and its row frame at tap time: the fly-back target
-    /// for that track even if the viewport check would rule its row out.
+    /// The tapped track and the player's cover frame at tap time: the
+    /// fly-back target for that track if the player's frame can't be
+    /// re-read on dismiss.
     @State private var origin: (id: Int, frame: CGRect)?
+    /// The overlay's origin on screen, for bringing the player's global
+    /// cover frame into the card container's space (the container fills
+    /// the overlay, and `dragOffset` is compensated separately).
+    @State private var screenOrigin: CGPoint = .zero
     /// Where the page strip sits (card-container space). Its bottom edge is
     /// fixed — the card is bottom-anchored — so cover positions are
     /// measured up from it.
@@ -321,6 +329,11 @@ struct TrackDetailOverlay: View {
     private func key(_ track: LibraryTrack) -> String { TrackPlayer.key(for: track) }
     /// This track is the one in the player (playing or paused).
     private func isLoaded(_ track: LibraryTrack) -> Bool { isFixture || player.playingKey == key(track) }
+    /// Like `isLoaded`, but exact in screenshot mode too: the one track the
+    /// posed mini player shows. Decides whether the cover flies home.
+    private func isInPlayer(_ track: LibraryTrack) -> Bool {
+        isFixture ? track.id == ScreenshotFixtures.nowPlaying?.id : player.playingKey == key(track)
+    }
     private func isPlaying(_ track: LibraryTrack) -> Bool { isFixture || (isLoaded(track) && !player.isPaused) }
     private func progress(_ track: LibraryTrack) -> Double {
         if isFixture { return ScreenshotFixtures.editPlayhead }
@@ -424,7 +437,11 @@ struct TrackDetailOverlay: View {
             .offset(y: dragOffset)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        // Taps go through to the library while the cover settles on its row.
+        .background(GeometryReader { geometry in
+            Color.clear.preference(key: ScreenOriginKey.self, value: geometry.frame(in: .global).origin)
+        })
+        .onPreferenceChange(ScreenOriginKey.self) { screenOrigin = $0 }
+        // Taps go through to the library while the cover settles in the player.
         .allowsHitTesting(!dismissing)
         .onChange(of: expanded) { expanded in
             if expanded {
@@ -449,8 +466,8 @@ struct TrackDetailOverlay: View {
         .onAppear {
             origin = (selection.track.id, selection.sourceFrame)
             // Screenshot mode arrives already expanded (posed). Otherwise
-            // wait one runloop so the cover has been laid out at the row's
-            // frame before it flies.
+            // wait one runloop so the cover has been laid out at the
+            // player's frame before it flies.
             guard !expanded else { frosted = true; settled = true; return }
             TrackDetailHaptics.snap.prepare()
             DispatchQueue.main.async {
@@ -480,7 +497,11 @@ struct TrackDetailOverlay: View {
     // MARK: Backdrop
 
     /// Frosted blur over the home layer with a light dim (the app is
-    /// dark-only, so the material tints dark); tap to dismiss. Both fade
+    /// dark-only, so the material tints dark); tap to dismiss. It fills
+    /// the overlay, which `HomeView`'s ZStack already lays out edge to
+    /// edge; ignoring the safe area again here made that ZStack re-inset
+    /// and the whole home layer (mini player included) jump 23pt up on
+    /// mount and back down on unmount. Both fade
     /// with the chrome on open/close. Only the solid dim thins while the
     /// card is dragged: the material's opacity changes just twice per
     /// presentation, never per frame, so the drag stays on the cheap
@@ -509,7 +530,6 @@ struct TrackDetailOverlay: View {
             }
         }
         .animation(backdropAnimation, value: expanded)
-        .ignoresSafeArea()
         .contentShape(Rectangle())
         .onTapGesture { dismiss() }
     }
@@ -585,6 +605,13 @@ struct TrackDetailOverlay: View {
     /// its track. Always its natural height (never squeezed to the strip's
     /// animating frame) and measured, so the strip can take the current
     /// page's height and the hero can find the slot.
+    ///
+    /// Every page is the same height: the title, byline and description
+    /// reserve their full line counts whether or not a track fills them,
+    /// so paging to a track with a shorter title or no description doesn't
+    /// move the card's top edge (the card used to jump between heights,
+    /// osebo 2026-10-05), and the hero's slot is in the same place on every
+    /// page.
     private func pageContent(_ page: Page) -> some View {
         let track = page.track
         return VStack(spacing: 24) {
@@ -593,15 +620,13 @@ struct TrackDetailOverlay: View {
 
             coverSlot(for: track)
 
-            if let description = description(of: track) {
-                Text(description)
-                    .font(.social(.subheadline))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity)
-                    .reveal(expanded, delay: TrackDetailMotion.scrubberDelay)
-            }
+            Text(description(of: track) ?? "")
+                .font(.social(.subheadline))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3, reservesSpace: true)
+                .frame(maxWidth: .infinity)
+                .reveal(expanded, delay: TrackDetailMotion.scrubberDelay)
 
             scrubber(for: track)
                 .reveal(expanded, delay: TrackDetailMotion.scrubberDelay)
@@ -622,16 +647,23 @@ struct TrackDetailOverlay: View {
     /// flight (the hero draws over it); once the card has settled the page
     /// draws the artwork itself, so paging moves it with the rest of the
     /// page. Never animated in or out: the hand-off is pixel-identical.
+    ///
+    /// The slot is a fixed 250pt square whether or not it holds the
+    /// artwork. As an empty `ZStack` it collapsed to 250×0 during the
+    /// flight, so the hero flew to a zero-height target (invisible) and
+    /// the card jumped 250pt taller when the artwork landed at settle
+    /// (osebo, 2026-10-05: "not fluid at all", "the sheet height jumps").
     private func coverSlot(for track: LibraryTrack) -> some View {
-        ZStack {
-            if settled {
-                TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 56))
-                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-                    .transition(.identity)
-            }
-        }
+        Color.clear
             .aspectRatio(1, contentMode: .fit)
             .frame(maxWidth: 250)
+            .overlay {
+                if settled {
+                    TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 56))
+                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                        .transition(.identity)
+                }
+            }
             .transaction { $0.animation = nil }
             .background(GeometryReader { geometry in
                 Color.clear.preference(
@@ -643,15 +675,15 @@ struct TrackDetailOverlay: View {
 
     // MARK: Hero
 
-    /// The current track's cover in flight: drawn at the row's 48pt frame
-    /// while collapsed and at its page's cover slot once expanded,
+    /// The current track's cover in flight: drawn at the player's 40pt
+    /// frame while collapsed and at its page's cover slot once expanded,
     /// springing between the two. Laid out at slot size and scaled, so
     /// the image never re-lays-out mid-flight; the corner radius reads
     /// 8pt small and 28pt large. The slot is placed from the strip's
     /// fixed bottom edge. The container carries `dragOffset`, so the
-    /// collapsed target compensates to land on the row wherever the card
-    /// was let go. With no row to land on (paged to a track whose row is
-    /// off screen) the cover shrinks and fades in place instead.
+    /// collapsed target compensates to land in the player wherever the
+    /// card was let go. With nowhere to land (paged to a track other than
+    /// the player's) the cover shrinks and fades in place instead.
     ///
     /// Only the flight lives here. Once the open spring has settled the
     /// page draws the cover in its own slot and this view is hidden (an
@@ -673,9 +705,9 @@ struct TrackDetailOverlay: View {
             width: slot.width,
             height: slot.height
         )
-        let source = selection.sourceFrame
+        let source = selection.sourceFrame.offsetBy(dx: -screenOrigin.x, dy: -screenOrigin.y)
         let hasSource = source.width > 0
-        let shrunk = CGRect(x: slotFrame.midX - 24, y: slotFrame.midY - 24, width: 48, height: 48)
+        let shrunk = CGRect(x: slotFrame.midX - 20, y: slotFrame.midY - 20, width: 40, height: 40)
         let flies = !expanded
         let target = flies ? (hasSource ? source : shrunk) : slotFrame
         let scale = target.width / slot.width
@@ -703,15 +735,15 @@ struct TrackDetailOverlay: View {
             Text(track.title ?? "Untitled")
                 .font(.custom("ETBembo-SemiBoldOSF", size: 30, relativeTo: .title))
                 .multilineTextAlignment(.center)
-                .lineLimit(2)
+                // Two lines always, so a one-line title sits where a
+                // two-line one would and the page keeps its height.
+                .lineLimit(2, reservesSpace: true)
                 .minimumScaleFactor(0.8)
-            if !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(.social(.body))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(1)
-            }
+            Text(subtitle)
+                .font(.social(.body))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(1, reservesSpace: true)
         }
         .frame(maxWidth: .infinity)
         // Keep the title clear of the owner menu in the corner.
@@ -899,8 +931,8 @@ struct TrackDetailOverlay: View {
                 switch axis {
                 case .vertical?:
                     if value.predictedEndTranslation.height > 140, dragOffset > 0 {
-                        // The cover flies back to its row from wherever the
-                        // card was let go; the chrome fades out in place.
+                        // The cover flies back to the player from wherever
+                        // the card was let go; the chrome fades out in place.
                         dismiss()
                     } else {
                         withAnimation(TrackDetailMotion.snapBack) {
@@ -965,25 +997,26 @@ struct TrackDetailOverlay: View {
     /// Commit a page: the neighbour becomes the current track and the
     /// strip's shift returns to zero in one animated change, so every page
     /// (and every cover) glides from where the finger left it to its new
-    /// resting place. Its row's resting frame — if the row is on screen —
+    /// resting place. The player's cover — if this is the player's track —
     /// becomes the fly-back target.
     private func page(to track: LibraryTrack) {
         TrackDetailHaptics.tap.impactOccurred()
-        let heroID = TrackDetailSelection.heroID(list: selection.list, track: track)
         withAnimation(TrackDetailMotion.page) {
             selection.track = track
-            selection.sourceFrame = resolvedRowFrame(for: track, heroID: heroID) ?? .zero
+            selection.sourceFrame = flyBackFrame(for: track) ?? .zero
             pageDrag = 0
         }
         // Nearing the end of what's loaded: fetch the next page of the list.
         Task { await loadMore(after: track) }
     }
 
-    /// The row frame to fly back to: the row if it's on screen, else the
-    /// tapped frame for the track that was tapped (its row was under the
-    /// finger, so it is visible whatever the viewport check says).
-    private func resolvedRowFrame(for track: LibraryTrack, heroID: String) -> CGRect? {
-        if let frame = rowFrame(heroID) { return frame }
+    /// Where the cover flies home to: the mini player's cover, but only
+    /// for the track the player is showing — any other track's cover has
+    /// no home on screen and shrinks away instead. Falls back to the frame
+    /// measured at tap time if the player's can't be re-read.
+    private func flyBackFrame(for track: LibraryTrack) -> CGRect? {
+        guard isInPlayer(track) else { return nil }
+        if let frame = playerFrame(), frame.width > 0 { return frame }
         if let origin, origin.id == track.id, origin.frame.width > 0 { return origin.frame }
         return nil
     }
@@ -999,10 +1032,9 @@ struct TrackDetailOverlay: View {
         guard !dismissing else { return }
         dismissing = true
         TrackDetailHaptics.snap.impactOccurred(intensity: 0.7)
-        // After paging, the cover goes home to the current track's row.
-        if let frame = resolvedRowFrame(for: track, heroID: selection.heroID) {
-            selection.sourceFrame = frame
-        }
+        // After paging, the cover goes home only if the current track is
+        // still the player's; `.zero` shrinks it away in place.
+        selection.sourceFrame = flyBackFrame(for: track) ?? .zero
         // The hero takes the cover back from the page (un-animated, same
         // pixels) and flies it home.
         settled = false
@@ -1010,8 +1042,8 @@ struct TrackDetailOverlay: View {
             expanded = false
         }
         // No animation-completion hook before iOS 17: remove the overlay
-        // once the fly-back has settled. The row's cover, hidden all this
-        // time, takes over in the same frame at the same spot.
+        // once the fly-back has settled. The player's cover, hidden all
+        // this time, takes over in the same frame at the same spot.
         DispatchQueue.main.asyncAfter(deadline: .now() + TrackDetailMotion.settle) {
             onDismiss()
         }
@@ -1022,7 +1054,7 @@ struct TrackDetailOverlay: View {
 /// points below (and from `scale`, anchored at its bottom edge) on the
 /// hero's spring, after `delay` — so the chrome cascades in behind the
 /// cover and the pills land last. Out: the reverse, quick and undelayed,
-/// so everything is gone before the cover reaches its row.
+/// so everything is gone before the cover reaches the player.
 private struct Reveal: ViewModifier {
     let expanded: Bool
     let delay: Double

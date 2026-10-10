@@ -47,9 +47,9 @@ struct HomeView: View {
     }
     @State private var dragRole: DragRole = .stage
     @State private var tabDragTranslation: CGFloat = 0
-    /// The track detail card over the home layer (tapped cover in either
-    /// list). Screenshot mode's `track` scene starts with it open, already
-    /// expanded (posed).
+    /// The track detail card over the home layer (opened from the mini
+    /// player's cover). Screenshot mode's `track` scene starts with it
+    /// open, already expanded (posed).
     @State private var detail: TrackDetailSelection? =
         ScreenshotMode.scene?.opensDetails == true
             ? ScreenshotFixtures.library.first.map {
@@ -57,13 +57,12 @@ struct HomeView: View {
             }
             : nil
     @State private var heroExpanded = ScreenshotMode.scene?.opensDetails == true
-    /// Resting frames of the list rows' covers and of the library card, for
-    /// the detail card's fly-back after it has paged to another track. A
-    /// plain reference, not SwiftUI state: it updates on every scroll
-    /// frame and must not re-render the home layer.
+    /// Resting frame (global coordinates) of the mini player's cover, for
+    /// the detail card's fly-back. A plain reference, not SwiftUI state: it
+    /// updates on every layout and must not re-render the home layer.
     @State private var homeFrames = HomeFrames()
     /// Screenshot mode's `track-demo` scene: where the ghost fingertip is
-    /// and the list covers' frames it taps (see `runTrackDemo`). Idle
+    /// and the player cover's frame it taps (see `runTrackDemo`). Idle
     /// otherwise.
     @State private var demoFinger: DemoFinger?
     @State private var demoCoverFrames: [String: CGRect] = [:]
@@ -131,60 +130,69 @@ struct HomeView: View {
                         value: heroExpanded
                     )
 
-                if let detail {
-                    TrackDetailOverlay(
-                        // The card pages between tracks and writes the
-                        // current one back here, so the rows' hidden cover
-                        // follows it. Writes after dismissal are dropped
-                        // rather than re-opening the card.
-                        selection: Binding(
-                            get: { self.detail ?? detail },
-                            set: { if self.detail != nil { self.detail = $0 } }
-                        ),
-                        player: model.player,
-                        expanded: $heroExpanded,
-                        safeArea: geometry.safeAreaInsets,
-                        rowFrame: { homeFrames.visibleRowFrame($0) },
-                        onDismiss: { self.detail = nil }
-                    )
-                    // The overlay animates itself in (hero + chrome fade)
-                    // and has already animated out by the time it's removed.
-                    .transition(.identity)
-                    .zIndex(1)
-                }
+            }
+            // The card lives in an overlay rather than as a ZStack child:
+            // as a child, something in its view tree made the ZStack
+            // re-inset (bottom safe area 34 → 0, library layer 874 → 851pt)
+            // on mount and back on unmount, so the mini player popped 23pt
+            // the moment the card appeared and again after the cover had
+            // landed on it (osebo, 2026-10-05). An overlay never changes
+            // its host's layout.
+            .overlay {
+                ZStack {
+                    if let detail {
+                        TrackDetailOverlay(
+                            // The card pages between tracks and writes the
+                            // current one back here, so the player's hidden
+                            // cover follows it. Writes after dismissal are
+                            // dropped rather than re-opening the card.
+                            selection: Binding(
+                                get: { self.detail ?? detail },
+                                set: { if self.detail != nil { self.detail = $0 } }
+                            ),
+                            player: model.player,
+                            expanded: $heroExpanded,
+                            safeArea: geometry.safeAreaInsets,
+                            playerFrame: { homeFrames.playerCoverFrame },
+                            onDismiss: { self.detail = nil }
+                        )
+                        // The overlay animates itself in (hero + chrome fade)
+                        // and has already animated out by the time it's removed.
+                        .transition(.identity)
+                        .zIndex(1)
+                    }
 
-                if demoWarming, let track = ScreenshotFixtures.library.first {
-                    // `track-demo` only: the card mounted invisibly for the
-                    // first moments so its material, fonts and symbols are
-                    // rendered once before the recorded open. Without it
-                    // the first open stalls the CI simulator's software
-                    // renderer and the flight is skipped.
-                    TrackDetailOverlay(
-                        selection: .constant(TrackDetailSelection(track: track, list: .library)),
-                        player: model.player,
-                        expanded: .constant(true),
-                        safeArea: geometry.safeAreaInsets,
-                        onDismiss: {}
-                    )
-                    .opacity(0.01)
-                    .allowsHitTesting(false)
-                    .zIndex(1)
-                }
+                    if demoWarming, let track = ScreenshotFixtures.library.first {
+                        // `track-demo` only: the card mounted invisibly for the
+                        // first moments so its material, fonts and symbols are
+                        // rendered once before the recorded open. Without it
+                        // the first open stalls the CI simulator's software
+                        // renderer and the flight is skipped.
+                        TrackDetailOverlay(
+                            selection: .constant(TrackDetailSelection(track: track, list: .library)),
+                            player: model.player,
+                            expanded: .constant(true),
+                            safeArea: geometry.safeAreaInsets,
+                            onDismiss: {}
+                        )
+                        .opacity(0.01)
+                        .allowsHitTesting(false)
+                        .zIndex(1)
+                    }
 
-                if let demoFinger {
-                    demoFingertip(demoFinger, width: width, safeArea: geometry.safeAreaInsets)
-                        .zIndex(2)
+                    if let demoFinger {
+                        demoFingertip(demoFinger, width: width, safeArea: geometry.safeAreaInsets)
+                            .zIndex(2)
+                    }
                 }
             }
             .ignoresSafeArea()
-            // The space the detail card's cover flies in (row frame ↔ card).
-            .coordinateSpace(name: HeroSpace.name)
             .simultaneousGesture(swipeAway(width: width))
             .onPreferenceChange(CoverFramesKey.self) { frames in
                 // Resting frames only: while the detail card is up the home
                 // layer is scaled back to 0.94 and the frames come through
-                // that transform. Nothing scrolls under the card, so the
-                // last resting set is what the fly-back lands on.
+                // that transform. Nothing moves under the card, so the last
+                // resting set is what the fly-back lands on.
                 if !heroExpanded {
                     homeFrames.frames = frames
                 }
@@ -249,11 +257,26 @@ struct HomeView: View {
         VStack(spacing: 20) {
             libraryCard(safeArea: safeArea, width: width)
 
-            HomeBottomBar(player: model.player, isScrubbing: $isScrubbing) {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                    libraryShown = false
+            HomeBottomBar(
+                player: model.player,
+                isScrubbing: $isScrubbing,
+                // Hidden for the overlay's whole lifetime (not just while
+                // expanded): on dismiss the home layer is still scaled
+                // back from 0.94, so a cover shown here would pop in off
+                // its spot and double the one flying home. Only while the
+                // card shows the player's track, though — paged to another
+                // track, the player keeps its own cover.
+                coverHidden: detail.map { playerShows($0.track) } ?? false,
+                onOpenDetails: { track, list, coverFrame in
+                    HomeHaptics.tap.impactOccurred()
+                    detail = TrackDetailSelection(track: track, list: list, sourceFrame: coverFrame)
+                },
+                goLive: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        libraryShown = false
+                    }
                 }
-            }
+            )
             .padding(.horizontal, 16)
         }
         .padding(.bottom, safeArea.bottom + 8)
@@ -273,14 +296,10 @@ struct HomeView: View {
                 uploads: model.uploads,
                 scrollLocked: listsLocked,
                 searchQuery: searchActive ? searchQuery : "",
-                listAtTop: $listAtTop,
-                detail: $detail
+                listAtTop: $listAtTop
             )
             .frame(width: width)
-            ExploreListView(
-                scrollLocked: listsLocked,
-                detail: $detail
-            )
+            ExploreListView(scrollLocked: listsLocked)
             .frame(width: width)
         }
         .offset(x: tabOffset)
@@ -325,12 +344,6 @@ struct HomeView: View {
                     )
                     .padding(.bottom, -48)
                 }
-                .background(GeometryReader { geometry in
-                    Color.clear.preference(
-                        key: CoverFramesKey.self,
-                        value: [HomeFrames.headerKey: geometry.frame(in: .named(HeroSpace.name))]
-                    )
-                })
                 .contentShape(Rectangle())
                 // Pulling down on the header reveals the search field. The
                 // header sits outside the scroll view, so this doesn't fight
@@ -360,12 +373,6 @@ struct HomeView: View {
                 .allowsHitTesting(false)
             }
             .background(Color(.systemBackground))
-            .background(GeometryReader { geometry in
-                Color.clear.preference(
-                    key: CoverFramesKey.self,
-                    value: [HomeFrames.cardKey: geometry.frame(in: .named(HeroSpace.name))]
-                )
-            })
             // Full-bleed at the top; only the bottom corners are rounded so
             // the card looks anchored to the top of the screen.
             .clipShape(UnevenRoundedRectangle(
@@ -453,15 +460,16 @@ struct HomeView: View {
     /// horizontal drag slides between the card's Library and Explore tabs.
     // MARK: - Screenshot demo
 
-    /// The `track-demo` screenshot scene: the library opens the detail card
-    /// by itself, for a simulator recording (scripts/simulator-screenshots.sh
-    /// records scenes ending in `-demo`). A ghost fingertip taps the first
-    /// track's cover and `detail` is set exactly as the row's button does,
-    /// so what's recorded is the real hero flight — then the backdrop is
-    /// tapped to dismiss, and the whole thing plays once more.
+    /// The `track-demo` screenshot scene: the home screen opens the detail
+    /// card by itself, for a simulator recording
+    /// (scripts/simulator-screenshots.sh records scenes ending in `-demo`).
+    /// A ghost fingertip taps the mini player's cover and `detail` is set
+    /// exactly as the player's button does, so what's recorded is the real
+    /// hero flight — then the backdrop is tapped to dismiss, and the whole
+    /// thing plays once more.
     private enum DemoFinger: Equatable {
-        /// Over a track's cover, placed by the hero geometry of that cover.
-        case cover(heroID: String)
+        /// Over the mini player's cover, placed by that cover's geometry.
+        case player
         /// Over the frosted backdrop above the card.
         case backdrop
     }
@@ -469,8 +477,9 @@ struct HomeView: View {
     @ViewBuilder
     private func demoFingertip(_ finger: DemoFinger, width: CGFloat, safeArea: EdgeInsets) -> some View {
         switch finger {
-        case .cover(let heroID):
-            let frame = demoCoverFrames[heroID] ?? CGRect(x: 44, y: safeArea.top + 120, width: 48, height: 48)
+        case .player:
+            let frame = demoCoverFrames[HomeFrames.playerKey]
+                ?? CGRect(x: 108, y: UIScreen.main.bounds.height - safeArea.bottom - 40, width: 40, height: 40)
             DemoFingertip()
                 .position(x: frame.midX, y: frame.midY)
         case .backdrop:
@@ -481,8 +490,7 @@ struct HomeView: View {
 
     @MainActor
     private func runTrackDemo() async {
-        guard let track = ScreenshotFixtures.library.first else { return }
-        let heroID = TrackDetailSelection.heroID(list: .library, track: track)
+        guard let track = ScreenshotFixtures.nowPlaying else { return }
 
         // Let the launch settle (the invisible card warms the renderer
         // meanwhile) and the library read as the starting point.
@@ -496,14 +504,14 @@ struct HomeView: View {
         let hold: TimeInterval = ScreenshotMode.pagesDetails ? PageDemoScript.total : 3.0
 
         for _ in 0..<cycles {
-            // Tap the cover.
-            demoTouch(.cover(heroID: heroID))
+            // Tap the player's cover.
+            demoTouch(.player)
             await demoPause(0.45)
             demoTouch(nil)
             await demoPause(0.12)
             HomeHaptics.tap.impactOccurred()
             detail = TrackDetailSelection(
-                track: track, list: .library, sourceFrame: demoCoverFrames[heroID] ?? .zero
+                track: track, list: .library, sourceFrame: demoCoverFrames[HomeFrames.playerKey] ?? .zero
             )
 
             // Hold the card open (the frost arrives once the hero settles).
@@ -521,6 +529,14 @@ struct HomeView: View {
 
             await demoPause(1.4)
         }
+    }
+
+    /// Whether the mini player is showing this track (so the detail card's
+    /// hero stands in for its cover). Screenshot mode poses the player on
+    /// the fixture track.
+    private func playerShows(_ track: LibraryTrack) -> Bool {
+        if ScreenshotMode.isActive { return track.id == ScreenshotFixtures.nowPlaying?.id }
+        return model.player.playingKey == TrackPlayer.key(for: track)
     }
 
     private func demoTouch(_ finger: DemoFinger?) {
@@ -629,12 +645,21 @@ struct LoopButton: View {
 
 /// The go-live circle with, while a track is playing, a mini player to its
 /// right (artwork, title, pause). Observes the player directly so it appears
-/// and disappears with playback.
+/// and disappears with playback. Tapping the artwork opens the track detail
+/// card (library and explore tracks only; streams and drafts have no card):
+/// the cover publishes its frame under `HomeFrames.playerKey` and hides
+/// while the card's copy is up, so there's one visible cover throughout.
 struct HomeBottomBar: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var player: TrackPlayer
     @Binding var isScrubbing: Bool
+    /// The detail card is showing this track: its cover is up there.
+    var coverHidden = false
+    /// Passed the track, the list it pages through, and the cover's global
+    /// frame, where the card's cover flies out from.
+    var onOpenDetails: ((LibraryTrack, TrackList, CGRect) -> Void)?
     let goLive: () -> Void
+    @State private var coverFrame: CGRect = .zero
 
     @StateObject private var waveform = WaveformLoader()
 
@@ -646,18 +671,39 @@ struct HomeBottomBar: View {
         let station: String?
         let imageURL: URL?
         let audioURL: URL?
+        /// Set for library and explore tracks: what the detail card opens on.
+        var track: LibraryTrack?
+        var list: TrackList?
+
+        init(track: LibraryTrack, list: TrackList) {
+            title = track.title ?? "Untitled"
+            station = track.station?.name
+            imageURL = (track.image ?? track.station?.image).flatMap(URL.init(string:))
+            audioURL = track.audioURL
+            self.track = track
+            self.list = list
+        }
+
+        init(title: String, station: String?, imageURL: URL?, audioURL: URL?) {
+            self.title = title
+            self.station = station
+            self.imageURL = imageURL
+            self.audioURL = audioURL
+        }
     }
 
     private var nowPlaying: NowPlaying? {
+        // Screenshot mode has no playback: the scenes that open the detail
+        // card pose the player on the fixture track the card opens from.
+        if ScreenshotMode.scene?.showsPlayer == true, let track = ScreenshotFixtures.nowPlaying {
+            return NowPlaying(track: track, list: .library)
+        }
         guard let key = player.playingKey else { return nil }
-        if let track = model.library.first(where: { TrackPlayer.key(for: $0) == key })
-            ?? model.exploreTracks.first(where: { TrackPlayer.key(for: $0) == key }) {
-            return NowPlaying(
-                title: track.title ?? "Untitled",
-                station: track.station?.name,
-                imageURL: (track.image ?? track.station?.image).flatMap(URL.init(string:)),
-                audioURL: track.audioURL
-            )
+        if let track = model.library.first(where: { TrackPlayer.key(for: $0) == key }) {
+            return NowPlaying(track: track, list: .library)
+        }
+        if let track = model.exploreTracks.first(where: { TrackPlayer.key(for: $0) == key }) {
+            return NowPlaying(track: track, list: .explore)
         }
         if let stream = model.exploreStreams.first(where: { TrackPlayer.key(for: $0) == key }) {
             // Live stream: endless, so no audio file to draw a waveform from.
@@ -686,9 +732,15 @@ struct HomeBottomBar: View {
 
             if let nowPlaying {
                 HStack(spacing: 12) {
-                    TrackArtwork(url: nowPlaying.imageURL)
-                        .frame(width: 40, height: 40)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    if let track = nowPlaying.track, let list = nowPlaying.list, let onOpenDetails {
+                        Button(action: { onOpenDetails(track, list, coverFrame) }) {
+                            artwork(nowPlaying.imageURL)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Track details")
+                    } else {
+                        artwork(nowPlaying.imageURL)
+                    }
                     if player.isPaused {
                         // Paused: the scrubber gives way to what's queued up.
                         VStack(alignment: .leading, spacing: 2) {
@@ -745,6 +797,24 @@ struct HomeBottomBar: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: player.playingKey)
+    }
+
+    /// The cover, publishing its global frame for the detail card's hero
+    /// and hidden while that hero stands in for it.
+    private func artwork(_ url: URL?) -> some View {
+        TrackArtwork(url: url)
+            .frame(width: 40, height: 40)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background(GeometryReader { geometry in
+                Color.clear.preference(
+                    key: CoverFramesKey.self,
+                    value: [HomeFrames.playerKey: geometry.frame(in: .global)]
+                )
+            })
+            .onPreferenceChange(CoverFramesKey.self) { frames in
+                if let frame = frames[HomeFrames.playerKey] { coverFrame = frame }
+            }
+            .opacity(coverHidden ? 0 : 1)
     }
 }
 
@@ -830,32 +900,18 @@ struct PlayingWaveform: View {
     }
 }
 
-/// Resting frames (in `HeroSpace`) of the list rows' covers (by hero id)
-/// and of the library card and its header, as last published while the
-/// detail card was down. Read when the detail card dismisses after paging
-/// to another track: the cover flies back to that track's row only if the
-/// row is fully in view between the header's fade and the bottom fade;
-/// otherwise the card shrinks its cover away in place.
+/// Resting frame (global coordinates) of the mini player's cover, as last
+/// published while the detail card was down. Read when the detail card
+/// dismisses: the cover flies back into the player if the card's current
+/// track is the player's; otherwise the card shrinks its cover away in
+/// place.
 final class HomeFrames {
-    static let cardKey = "home-card"
-    static let headerKey = "home-header"
+    static let playerKey = "home-player"
 
     var frames: [String: CGRect] = [:]
 
-    /// The band of the card where a row cover is fully visible: below the
-    /// header's gradient (which bleeds 48pt past the header) and above the
-    /// 56pt bottom fade. Nil until both frames have been measured.
-    var listViewport: CGRect? {
-        guard let card = frames[Self.cardKey], let header = frames[Self.headerKey],
-              card.height > 0 else { return nil }
-        let top = header.maxY + 48
-        let bottom = card.maxY - 56
-        guard bottom > top else { return nil }
-        return CGRect(x: card.minX, y: top, width: card.width, height: bottom - top)
-    }
-
-    func visibleRowFrame(_ heroID: String) -> CGRect? {
-        guard let frame = frames[heroID], frame.width > 0, let viewport = listViewport else { return nil }
-        return viewport.contains(frame) ? frame : nil
+    var playerCoverFrame: CGRect? {
+        guard let frame = frames[Self.playerKey], frame.width > 0 else { return nil }
+        return frame
     }
 }

@@ -34,11 +34,11 @@ enum ScreenshotMode {
         /// The track detail card (cover, scrubber, transport, share/edit)
         /// floating over the library, on its first track.
         case track
-        /// The library opening the detail card by itself: a ghost fingertip
-        /// taps the first track's cover, the cover flies into the card over
-        /// the frosted library, the card is dismissed, and it plays once
-        /// more (~13 s) — the hero transition on record. Recorded, not
-        /// screenshotted (see `editDemo`).
+        /// The home screen opening the detail card by itself: a ghost
+        /// fingertip taps the mini player's cover, the cover flies into the
+        /// card over the frosted library, the card is dismissed, and it
+        /// plays once more (~13 s) — the hero transition on record.
+        /// Recorded, not screenshotted (see `editDemo`).
         case trackDemo = "track-demo"
         /// `track-demo`, then the open card pages sideways by itself: a
         /// ghost fingertip swipes to the next track, the next again, and
@@ -56,6 +56,10 @@ enum ScreenshotMode {
         var opensEditor: Bool { self == .edit || self == .editDemo }
         /// The library opens the detail card on its first track.
         var opensDetails: Bool { self == .track }
+        /// The mini player poses with `ScreenshotFixtures.nowPlaying` loaded:
+        /// the detail card opens from its cover, so every scene that shows
+        /// or opens the card needs it on screen.
+        var showsPlayer: Bool { opensDetails || animatesDetails }
         /// The editor runs its scripted demo instead of posing from fixtures.
         var animatesEditor: Bool { self == .editDemo }
         /// Home scripts the cover tap → detail card transition itself.
@@ -152,6 +156,10 @@ enum ScreenshotFixtures {
             return Float(min(1, max(0.12, swell * Double(0.6 + 0.4 * noise))))
         }
     }()
+
+    /// The track the posed mini player shows (and the detail card opens
+    /// on): the library's first.
+    static var nowPlaying: LibraryTrack? { library.first }
 
     static let library: [LibraryTrack] = [
         track(101, "Late Shift — Episode 48", streamedAt: "2026-10-02T21:00:00.000Z",
