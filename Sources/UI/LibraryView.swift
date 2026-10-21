@@ -162,6 +162,18 @@ struct LibraryListView: View {
                     draftsSection
                 }
 
+                // A pick from the plus menu that couldn't be copied in
+                // (nothing to retry from a draft row, so say so here).
+                if let error = uploads.importError {
+                    Text(error)
+                        .font(.social(.footnote))
+                        .foregroundStyle(Color.eveningsRed)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+                }
+
                 ForEach(filteredLibrary) { track in
                     let heroID = TrackDetailSelection.heroID(list: .library, track: track)
                     TrackRow(

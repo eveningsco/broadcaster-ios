@@ -23,7 +23,7 @@ The app has a debug-only **screenshot mode**: launched with `-screenshot <scene>
 | --- | --- |
 | `login` | The sign-in form |
 | `signup` | Account creation |
-| `library` | Home, with the Library tab over the stage |
+| `library` | Home, with the Library tab over the stage and the plus circle (Go live / Record / Upload menu) |
 | `explore` | Home, with the Explore tab |
 | `account` | The account sheet (station photo, name, sign out) |
 | `edit` | The trim and tempo editor over the library |
