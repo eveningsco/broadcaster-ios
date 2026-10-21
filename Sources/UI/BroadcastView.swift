@@ -30,6 +30,8 @@ struct BroadcastView: View {
     // badge and "End" button agree; every other launch starts Offline.
     @State private var mode: StageMode = ScreenshotMode.scene == .live ? .live : .record
     @State private var now = Date()
+    /// The Files picker behind "Upload a file".
+    @State private var pickingFiles = false
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -73,6 +75,10 @@ struct BroadcastView: View {
                     .disabled(centerDisabled)
                 }
 
+            if showsUploadPill {
+                uploadPill
+            }
+
             if case .live(let since) = broadcast.state {
                 VStack(spacing: 4) {
                     Text(elapsed(since: since))
@@ -99,6 +105,11 @@ struct BroadcastView: View {
                 .padding(.horizontal, 8)
             } else if let uploadError = uploads.uploadError, mode == .record {
                 Text("Saved on this phone — upload from the library when you're back online. (\(uploadError))")
+                    .font(.social(.footnote))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            } else if let importError = uploads.importError, mode == .record {
+                Text(importError)
                     .font(.social(.footnote))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -146,6 +157,40 @@ struct BroadcastView: View {
         .onReceive(ticker) { date in
             now = date
         }
+        .fileImporter(
+            isPresented: $pickingFiles,
+            allowedContentTypes: AudioImport.contentTypes,
+            allowsMultipleSelection: true
+        ) { result in
+            if case .success(let urls) = result {
+                model.importAudio(from: urls)
+            }
+        }
+    }
+
+    /// Offline mode's second way into the library, next to Record: a file
+    /// that already exists (a set from a laptop, a voice memo exported to
+    /// Files). Steps aside while something is recording or going up.
+    private var showsUploadPill: Bool {
+        mode == .record && !recorder.state.isRecording && uploads.uploadingDraftId == nil
+    }
+
+    private var uploadPill: some View {
+        Button {
+            StageHaptics.press.impactOccurred(intensity: 0.6)
+            pickingFiles = true
+        } label: {
+            Label("Upload a file", systemImage: "square.and.arrow.up")
+                .font(.social(.footnote, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(Color.primary.opacity(0.08)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(broadcast.state.isActive)
+        .transition(.opacity)
     }
 
     private var header: some View {

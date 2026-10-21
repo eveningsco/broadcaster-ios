@@ -83,6 +83,30 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Files picked in the Files app (Upload a file on the stage, Upload
+    /// Audio in an empty library): copy them in as drafts, then send them
+    /// up one after another — the same path a finished recording takes, so
+    /// a pick that can't go up right now stays on the phone with a retry
+    /// in the library. A pick that can't be taken in at all (wrong type,
+    /// unreadable) lands in `uploads.importError`, shown on the stage and
+    /// in the empty library.
+    func importAudio(from urls: [URL]) {
+        Task {
+            uploads.importError = nil
+            let result = await uploads.importFiles(urls)
+            uploads.importError = result.errors.first?.localizedDescription
+            var anyUploaded = false
+            for draft in result.drafts {
+                if await uploads.upload(draft) {
+                    anyUploaded = true
+                }
+            }
+            if anyUploaded {
+                await loadLibrary()
+            }
+        }
+    }
+
     var isLoggedIn: Bool { credentials != nil }
 
     /// What the account sheet shows for the signed-in station. The deployed
