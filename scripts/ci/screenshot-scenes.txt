@@ -11,8 +11,9 @@
 # A changed file that matches no line counts as ALL, so a new view file is
 # screenshotted everywhere until someone maps it here.
 #
-# `-demo` recordings (edit-demo, track-demo, page-demo) are never chosen
-# automatically; they cost ~30-60 s each. Ask for them with --scenes.
+# `-demo` recordings (edit-demo, track-demo, page-demo, plus-demo) are never
+# chosen automatically; they cost ~30-90 s each. Ask for them with --scenes.
+# plus-demo is tap-driven (UITests/Demos.swift) and adds a build-for-testing.
 
 # --- Signed out ------------------------------------------------------------
 Sources/UI/LoginView.swift          login
@@ -47,6 +48,7 @@ Sources/Assets.xcassets/AppIcon.appiconset/*  NONE
 docs/*                              NONE
 .github/workflows/testflight.yml    NONE
 scripts/ci-screenshots.py           NONE
+UITests/*                           NONE
 scripts/ci/screenshot-scenes.txt    NONE
 .gitignore                          NONE
 

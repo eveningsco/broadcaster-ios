@@ -5,7 +5,10 @@
 # for VIDEO_SECONDS instead: the result is <scene>.mov plus <scene>.png, an
 # animated PNG of the same clip. (APNG because the Simulator Screenshots
 # workflow uploads `*.png`; it plays in any browser and converts to GIF/MP4
-# with ffmpeg.)
+# with ffmpeg.) A `-demo` scene that has a `test_<scene>` method in
+# UITests/Demos.swift (dashes → underscores) is driven by that UI test
+# instead of a plain launch when XCTESTRUN points at a `build-for-testing`
+# product: the recording runs for as long as the test does.
 #
 #   scripts/simulator-screenshots.sh <path/to/Evenings.app> <output dir>
 #
@@ -22,6 +25,9 @@
 #   VIDEO_FPS      animated-PNG frame rate (default: 15)
 #   VIDEO_HEIGHT   animated-PNG height in px (default: 1300, ~half of a 3x
 #                  iPhone; the .mov keeps full resolution)
+#   XCTESTRUN      .xctestrun from `xcodebuild build-for-testing`; enables the
+#                  tap-driven demos (see above). Without it those scenes are
+#                  launched like any other demo and just sit on their scene.
 #   FFMPEG         ffmpeg binary for the conversion. Default: `ffmpeg` on PATH,
 #                  else a static build fetched once via `pip install
 #                  imageio-ffmpeg` into a venv under $TMPDIR (GitHub's macOS
@@ -40,6 +46,15 @@ VIDEO_SECONDS=${VIDEO_SECONDS:-30}
 VIDEO_FPS=${VIDEO_FPS:-15}
 VIDEO_HEIGHT=${VIDEO_HEIGHT:-1300}
 BUNDLE_ID=co.evenings.EveningsBroadcaster
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+
+# Name of the UI test that drives this scene, if any (see UITests/Demos.swift).
+demo_test() {
+  local name="test_${1//-/_}"
+  if [ -n "${XCTESTRUN:-}" ] && grep -q "func $name()" "$REPO/UITests/Demos.swift" 2>/dev/null; then
+    echo "EveningsUITests/Demos/$name"
+  fi
+}
 
 # Prints the path of an ffmpeg to use, fetching a static build if needed.
 ffmpeg_bin() {
@@ -96,6 +111,9 @@ xcrun simctl status_bar "$udid" override \
 
 xcrun simctl uninstall "$udid" "$BUNDLE_ID" 2>/dev/null || true
 xcrun simctl install "$udid" "$APP"
+# Screenshot mode never records, but a tap-driven demo that reveals the stage
+# must not stall on a microphone permission alert.
+xcrun simctl privacy "$udid" grant microphone "$BUNDLE_ID" 2>/dev/null || true
 
 case "$APPEARANCE" in
   both) appearances="light dark" ;;
@@ -131,8 +149,34 @@ for appearance in $appearances; do
           cat "$base.recorder.log" >&2
           exit 1
         fi
-        xcrun simctl launch "$udid" "$BUNDLE_ID" -screenshot "$scene" >/dev/null
-        sleep "$VIDEO_SECONDS"
+        test=$(demo_test "$scene")
+        if [ -n "$test" ]; then
+          # The UI test launches the app itself (with its own arguments) and
+          # the recording lasts as long as the test; the clip starts with
+          # the runner's start-up and gets trimmed afterwards. No simulator
+          # clones: the test must run on the device being recorded.
+          echo "driving $scene with $test"
+          set +e
+          xcodebuild test-without-building \
+            -xctestrun "$XCTESTRUN" \
+            -destination "id=$udid" \
+            -only-testing:"$test" \
+            -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 240 \
+            2>&1 | tee "$base.xctest.log" | grep -E 'Test Case|error:|failed|passed|\*\* TEST'
+          set -e
+          grep -qE '\*\* TEST (EXECUTE )?SUCCEEDED \*\*' "$base.xctest.log" || {
+            echo "UI test for $scene failed; see $base.xctest.log" >&2
+            # Ride the workflow's xcodebuild-log artifact.
+            [ -f build/xcodebuild.log ] && cat "$base.xctest.log" >> build/xcodebuild.log
+            kill -INT "$recorder"; wait "$recorder" || true
+            exit 1
+          }
+          rm -f "$base.xctest.log"
+        else
+          xcrun simctl launch "$udid" "$BUNDLE_ID" -screenshot "$scene" >/dev/null
+          sleep "$VIDEO_SECONDS"
+        fi
         kill -INT "$recorder"
         wait "$recorder" || true
         cat "$base.recorder.log"

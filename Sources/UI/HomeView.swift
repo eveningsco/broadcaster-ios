@@ -232,7 +232,10 @@ struct HomeView: View {
             // Live level meter while the stage is showing (mic check before
             // going live); release the mic when browsing. Starting/stopping
             // capture blocks the main thread long enough to drop frames, so
-            // wait for the slide animation to settle first.
+            // wait for the slide animation to settle first. Not in screenshot
+            // mode: the stage is posed there, and asking for the microphone
+            // would put a permission alert into a recorded demo.
+            guard !ScreenshotMode.isActive else { return }
             audioTransitionTask?.cancel()
             audioTransitionTask = Task {
                 try? await Task.sleep(nanoseconds: 450_000_000)
@@ -707,13 +710,13 @@ struct HomeBottomBar: View {
                 .overlay {
                     Image(systemName: "plus")
                         .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.black)
                 }
                 .contentShape(Circle())
         }
         // Menu labels take the tint over foregroundStyle; keep the plus
-        // white on the orange.
-        .tint(.white)
+        // black on the orange (osebo, 2026-10-22).
+        .tint(.black)
         .accessibilityLabel("Add to your station")
     }
 

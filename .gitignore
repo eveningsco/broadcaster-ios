@@ -4,3 +4,4 @@ DerivedData/
 .DS_Store
 xcuserdata/
 __pycache__/
+UITests/Info.plist
