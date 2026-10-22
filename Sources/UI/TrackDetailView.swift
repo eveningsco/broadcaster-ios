@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 import UIKit
 
@@ -120,8 +121,9 @@ private struct SlotFramesKey: PreferenceKey {
     }
 }
 
-/// Natural height of each page's content, by track id.
-private struct PageHeightsKey: PreferenceKey {
+/// Each page's control card height, by track id (sizes the artwork on
+/// short screens).
+private struct ControlsHeightsKey: PreferenceKey {
     static var defaultValue: [Int: CGFloat] = [:]
     static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
         value.merge(nextValue()) { _, new in new }
@@ -154,12 +156,14 @@ private struct StripFrameKey: PreferenceKey {
 /// that transaction merging into the overlay's first render, so only the
 /// value-animated chrome moved.
 ///
-/// The card floats inset from the screen edges, bottom-anchored: title and
-/// byline, the cover, the description, a waveform scrubber with
-/// elapsed/total, and a transport (−15 s, play/pause, +15 s). Three pills
-/// float under it: Share, Loop and Edit, the last of which opens
-/// the combined audio editor (`AudioEditSheet`). Owners get Edit Details
-/// from a `…` in the card's corner.
+/// Laid out after the iOS 26 lock-screen player (osebo, 2026-10-22): the
+/// artwork fills the screen's width (less `screenInset`) at the top, and a
+/// frosted control card sits at the bottom with the title, byline and
+/// description, a slim progress bar with elapsed / remaining either side,
+/// and a transport (−15 s, play/pause, +15 s, audio-route picker). Three
+/// pills float under it: Share, Loop and Edit, the last of which opens the
+/// combined audio editor (`AudioEditSheet`). Owners get Edit Details from
+/// a `…` in the control card's corner.
 ///
 /// Swipe sideways to page to the next / previous track in the list the
 /// card opened from (osebo, 2026-10-05). The card's content is a strip of
@@ -167,9 +171,9 @@ private struct StripFrameKey: PreferenceKey {
 /// and the covers ride along in the hero layer, so the current cover
 /// slides out as its neighbour slides in; releasing past a third of the
 /// width (or flicking) commits on `TrackDetailMotion.page`, otherwise it
-/// springs back. Pages are bottom-aligned in the strip, so when a taller
-/// or shorter page lands the card grows or shrinks from its top edge and
-/// no cover moves except the ones paging. After paging, dismiss flies the
+/// springs back. Every page is the strip's full height — artwork at the
+/// top, control card at the bottom — so when a page with a taller card
+/// lands only the gap between the two changes. After paging, dismiss flies the
 /// cover back to the *current* track's row if that row is on screen (the
 /// resting row frames come from `HomeView`), else it shrinks away in place.
 ///
@@ -208,7 +212,6 @@ struct TrackDetailOverlay: View {
     /// Called once the fly-back animation has finished; removes the overlay.
     let onDismiss: () -> Void
 
-    @StateObject private var waveform = WaveformLoader()
     @State private var isScrubbing = false
     @State private var editingAudio = false
     @State private var editingDetails = false
@@ -226,14 +229,14 @@ struct TrackDetailOverlay: View {
     /// The tapped track and its row frame at tap time: the fly-back target
     /// for that track even if the viewport check would rule its row out.
     @State private var origin: (id: Int, frame: CGRect)?
-    /// Where the page strip sits (card-container space). Its bottom edge is
-    /// fixed — the card is bottom-anchored — so cover positions are
-    /// measured up from it.
+    /// Where the page strip sits (card-container space). Its top edge is
+    /// fixed — pages are top-anchored at the strip's full height — so cover
+    /// positions are measured down from it.
     @State private var stripFrame: CGRect = .zero
-    /// Each page's cover slot in that page's own space, and each page's
-    /// natural height; together they place the hero.
+    /// Each page's cover slot in that page's own space (places the hero)
+    /// and each page's control card height (sizes the art on short screens).
     @State private var slotFrames: [Int: CGRect] = [:]
-    @State private var pageHeights: [Int: CGFloat] = [:]
+    @State private var controlsHeights: [Int: CGFloat] = [:]
     /// `page-demo` only: the ghost fingertip's position (card space)
     /// while it swipes the strip; nil when lifted.
     @State private var demoFinger: CGPoint?
@@ -326,13 +329,7 @@ struct TrackDetailOverlay: View {
         if isFixture { return ScreenshotFixtures.editPlayhead }
         return isLoaded(track) ? player.progress : 0
     }
-    /// Decoded levels for the current track, or a neighbour's if they were
-    /// decoded while it was current (flat bars otherwise).
-    private func levels(_ track: LibraryTrack) -> [Float]? {
-        waveform.levels(for: key(track)) ?? (isFixture ? ScreenshotFixtures.editWaveform : nil)
-    }
     private func totalDuration(_ track: LibraryTrack) -> TimeInterval { TimeInterval(track.duration ?? 0) }
-    private func elapsed(_ track: LibraryTrack) -> TimeInterval { progress(track) * totalDuration(track) }
 
     /// The mic owns the audio session while broadcasting, same rule as the
     /// list rows and the editor.
@@ -358,16 +355,28 @@ struct TrackDetailOverlay: View {
         return text.isEmpty ? nil : text
     }
 
-    /// The card's surface; the pills share it so they read as one set.
-    /// Pure black (osebo, 2026-10-05) rather than the system's off-grey;
-    /// `edge` is a faint hairline that keeps the black shapes separable
-    /// from the dark frosted backdrop behind them.
-    private let surface = Color.black
-    private let edge = Color.white.opacity(0.08)
-    private let cardCorner: CGFloat = 40
-    /// The strip's inset from the card's top and bottom edges.
-    private let stripTopInset: CGFloat = 32
-    private let stripBottomInset: CGFloat = 24
+    /// The control card's surface; the pills share it so they read as one
+    /// set. Frosted glass, a shade lighter than the backdrop, after the
+    /// iOS 26 lock-screen player (osebo, 2026-10-22; it was pure black
+    /// before). `edge` is a faint hairline that keeps the shapes separable
+    /// from the frosted backdrop. The recorded demos use a flat grey: the
+    /// CI simulator's software renderer stalls on a material that moves.
+    private var surface: AnyShapeStyle {
+        ScreenshotMode.recordsDetails ? AnyShapeStyle(Color(white: 0.14)) : AnyShapeStyle(Material.ultraThinMaterial)
+    }
+    private let edge = Color.white.opacity(0.1)
+    private let cardCorner: CGFloat = 32
+    private let artCorner: CGFloat = 28
+    /// The page column's inset from the screen's sides.
+    private let screenInset: CGFloat = 16
+    /// Insets below the top and above the bottom safe areas.
+    private let topInset: CGFloat = 16
+    private let bottomInset: CGFloat = 8
+    /// Smallest gap between the artwork and the control card.
+    private let artGap: CGFloat = 12
+    /// The pill row's height and its gap above.
+    private let pillHeight: CGFloat = 56
+    private let pillGap: CGFloat = 12
 
     /// How far along the drag-to-dismiss is (0 at rest, 0.6 well past the
     /// commit distance); thins the backdrop's dim as the card goes. Only
@@ -394,36 +403,41 @@ struct TrackDetailOverlay: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            backdrop
+        GeometryReader { geometry in
+            let size = geometry.size
+            let pageHeight = pageHeight(in: size)
+            ZStack(alignment: .top) {
+                backdrop
 
-            // Card container: fills the hero space so its own coordinates
-            // match it, and carries the drag offset for card and hero alike.
-            ZStack {
-                VStack(spacing: 12) {
-                    card
-                    pills
+                // Card container: fills the hero space so its own coordinates
+                // match it, and carries the drag offset for card and hero
+                // alike. The strip takes everything above the pills.
+                ZStack(alignment: .top) {
+                    VStack(spacing: pillGap) {
+                        strip(height: pageHeight)
+                        pills
+                    }
+                    .padding(.horizontal, screenInset)
+                    .padding(.top, safeArea.top + topInset)
+                    .padding(.bottom, safeArea.bottom + bottomInset)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .gesture(cardDrag)
+
+                    hero(in: size)
+
+                    if let demoFinger {
+                        DemoFingertip()
+                            .position(demoFinger)
+                    }
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, safeArea.top + 16)
-                .padding(.bottom, safeArea.bottom + 8)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .gesture(cardDrag)
-
-                hero
-
-                if let demoFinger {
-                    DemoFingertip()
-                        .position(demoFinger)
-                }
+                .coordinateSpace(name: "card")
+                .onPreferenceChange(StripFrameKey.self) { stripFrame = $0 }
+                .onPreferenceChange(SlotFramesKey.self) { slotFrames = $0 }
+                .onPreferenceChange(ControlsHeightsKey.self) { controlsHeights = $0 }
+                .offset(y: dragOffset)
             }
-            .coordinateSpace(name: "card")
-            .onPreferenceChange(StripFrameKey.self) { stripFrame = $0 }
-            .onPreferenceChange(SlotFramesKey.self) { slotFrames = $0 }
-            .onPreferenceChange(PageHeightsKey.self) { pageHeights = $0 }
-            .offset(y: dragOffset)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Taps go through to the library while the cover settles on its row.
         .allowsHitTesting(!dismissing)
         .onChange(of: expanded) { expanded in
@@ -458,12 +472,6 @@ struct TrackDetailOverlay: View {
                     expanded = true
                 }
             }
-        }
-        // Reloads when the card pages (cached once decoded, so paging back
-        // is instant).
-        .task(id: current.id) {
-            guard !isFixture else { return }
-            waveform.load(key: key(current), url: current.audioURL, buckets: 48)
         }
         .task {
             guard ScreenshotMode.pagesDetails else { return }
@@ -514,55 +522,44 @@ struct TrackDetailOverlay: View {
         .onTapGesture { dismiss() }
     }
 
-    // MARK: Card
+    // MARK: Layout
 
-    private var card: some View {
-        // The surface rises and swells into place on the hero's spring,
-        // and the chrome cascades in behind the cover, top to bottom. Only
-        // the background and the individual pieces move — the layout stays
-        // put so the cover slot the hero flies to never shifts mid-flight.
-        strip
-            .padding(.top, stripTopInset)
-            .padding(.bottom, stripBottomInset)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: cardCorner, style: .continuous)
-                    .fill(surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: cardCorner, style: .continuous)
-                            .strokeBorder(edge, lineWidth: 1)
-                    )
-                    .reveal(expanded, rise: 28, scale: 0.96)
-            )
-            .overlay(alignment: .topTrailing) {
-                if current.owner == true {
-                    Menu {
-                        Button {
-                            editingDetails = true
-                        } label: {
-                            Label("Edit Details", systemImage: "pencil")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(Color(.systemGray))
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .padding(8)
-                    .reveal(expanded, delay: TrackDetailMotion.transportDelay, rise: 0)
-                }
-            }
+    /// The strip's height: the screen less the safe areas, the insets, the
+    /// pill row and its gap. Every page is laid out at exactly this height
+    /// (artwork at its top, control card at its bottom), so the hero's slot
+    /// is the same for every page and paging never moves anything up or
+    /// down.
+    private func pageHeight(in size: CGSize) -> CGFloat {
+        max(0, size.height - safeArea.top - topInset - safeArea.bottom - bottomInset - pillGap - pillHeight)
     }
 
-    /// The pages side by side, the current one deciding the card's height.
-    /// Bottom-aligned: the card is anchored to the bottom of the screen, so
-    /// a height change moves the card's top edge and nothing else — the
-    /// resting covers stay exactly where they are. Clipped to the card's
-    /// edges (not the strip's), so a taller neighbour sliding in is cut at
-    /// the card's top and the chrome's reveal rise isn't.
-    private var strip: some View {
-        ZStack(alignment: .bottom) {
+    /// The artwork's side: the page's full width, unless the screen is too
+    /// short for that above the control card (an SE), in which case it
+    /// takes what's left. The card's height is measured — a page with a
+    /// description is taller — and estimated until it has been; on a
+    /// phone-sized screen the width wins either way.
+    private func artSide(pageWidth: CGFloat, pageHeight: CGFloat, for track: LibraryTrack) -> CGFloat {
+        let controls = controlsHeights[track.id] ?? 232
+        return max(120, min(pageWidth, pageHeight - artGap - controls))
+    }
+
+    /// Where a page's artwork sits in the page's own space: top-centred.
+    /// Measured too (`SlotFramesKey`); this is the fallback before layout.
+    private func artSlot(in size: CGSize, for track: LibraryTrack) -> CGRect {
+        let width = size.width - 2 * screenInset
+        let side = artSide(pageWidth: width, pageHeight: pageHeight(in: size), for: track)
+        return CGRect(x: (width - side) / 2, y: 0, width: side, height: side)
+    }
+
+    // MARK: Strip
+
+    /// The pages side by side, all at the strip's full height and
+    /// top-aligned: artwork at the top, the control card at the bottom,
+    /// whatever is left between them. Clipped a little wider than itself
+    /// at the bottom so the control card's reveal rise isn't cut, and to
+    /// its own width so a neighbour sliding in is cut at the page's edges.
+    private func strip(height: CGFloat) -> some View {
+        ZStack(alignment: .top) {
             ForEach(pages) { page in
                 pageContent(page)
                     .offset(x: pageShift(page))
@@ -570,51 +567,33 @@ struct TrackDetailOverlay: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(height: pageHeights[current.id], alignment: .bottom)
+        .frame(height: height, alignment: .top)
         .background(GeometryReader { geometry in
             Color.clear.preference(key: StripFrameKey.self, value: geometry.frame(in: .named("card")))
         })
         .mask {
             Rectangle()
-                .padding(.top, -stripTopInset)
-                .padding(.bottom, -stripBottomInset)
+                .padding(.bottom, -40)
         }
     }
 
-    /// One page: heading, cover slot, description, scrubber, transport for
-    /// its track. Always its natural height (never squeezed to the strip's
-    /// animating frame) and measured, so the strip can take the current
-    /// page's height and the hero can find the slot.
+    /// One page: the artwork, then the control card pinned to the bottom
+    /// (title, byline, description, progress, transport). Exactly the
+    /// strip's size, so every page's cover slot is in the same place.
     private func pageContent(_ page: Page) -> some View {
         let track = page.track
-        return VStack(spacing: 24) {
-            heading(for: track)
-                .reveal(expanded, delay: TrackDetailMotion.headingDelay)
+        return GeometryReader { geometry in
+            VStack(spacing: 0) {
+                coverSlot(for: track, side: artSide(
+                    pageWidth: geometry.size.width, pageHeight: geometry.size.height, for: track
+                ))
 
-            coverSlot(for: track)
+                Spacer(minLength: artGap)
 
-            if let description = description(of: track) {
-                Text(description)
-                    .font(.social(.subheadline))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity)
-                    .reveal(expanded, delay: TrackDetailMotion.scrubberDelay)
+                controls(for: track)
             }
-
-            scrubber(for: track)
-                .reveal(expanded, delay: TrackDetailMotion.scrubberDelay)
-
-            transport(for: track)
-                .reveal(expanded, delay: TrackDetailMotion.transportDelay)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
         }
-        .padding(.horizontal, 24)
-        .frame(maxWidth: .infinity)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(GeometryReader { geometry in
-            Color.clear.preference(key: PageHeightsKey.self, value: [track.id: geometry.size.height])
-        })
         .coordinateSpace(name: pageSpace(track))
     }
 
@@ -622,16 +601,15 @@ struct TrackDetailOverlay: View {
     /// flight (the hero draws over it); once the card has settled the page
     /// draws the artwork itself, so paging moves it with the rest of the
     /// page. Never animated in or out: the hand-off is pixel-identical.
-    private func coverSlot(for track: LibraryTrack) -> some View {
+    private func coverSlot(for track: LibraryTrack, side: CGFloat) -> some View {
         ZStack {
             if settled {
-                TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 56))
-                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 72))
+                    .clipShape(RoundedRectangle(cornerRadius: artCorner, style: .continuous))
                     .transition(.identity)
             }
         }
-            .aspectRatio(1, contentMode: .fit)
-            .frame(maxWidth: 250)
+            .frame(width: side, height: side)
             .transaction { $0.animation = nil }
             .background(GeometryReader { geometry in
                 Color.clear.preference(
@@ -639,6 +617,7 @@ struct TrackDetailOverlay: View {
                     value: [track.id: geometry.frame(in: .named(pageSpace(track)))]
                 )
             })
+            .frame(maxWidth: .infinity)
     }
 
     // MARK: Hero
@@ -647,8 +626,8 @@ struct TrackDetailOverlay: View {
     /// while collapsed and at its page's cover slot once expanded,
     /// springing between the two. Laid out at slot size and scaled, so
     /// the image never re-lays-out mid-flight; the corner radius reads
-    /// 8pt small and 28pt large. The slot is placed from the strip's
-    /// fixed bottom edge. The container carries `dragOffset`, so the
+    /// 8pt small and `artCorner` large. The slot is placed from the
+    /// strip's fixed top edge. The container carries `dragOffset`, so the
     /// collapsed target compensates to land on the row wherever the card
     /// was let go. With no row to land on (paged to a track whose row is
     /// off screen) the cover shrinks and fades in place instead.
@@ -662,14 +641,12 @@ struct TrackDetailOverlay: View {
     /// measured per frame) for a reason that never surfaced. `dismiss()`
     /// shows the hero again before it collapses `expanded`, so the cover
     /// flies home from the slot.
-    private var hero: some View {
+    private func hero(in size: CGSize) -> some View {
         let track = current
-        let slot = slotFrames[track.id]
-            ?? CGRect(x: (stripFrame.width - 250) / 2, y: 0, width: 250, height: 250)
-        let pageHeight = pageHeights[track.id] ?? slot.maxY
+        let slot = slotFrames[track.id] ?? artSlot(in: size, for: track)
         let slotFrame = CGRect(
             x: stripFrame.minX + slot.minX,
-            y: stripFrame.maxY - (pageHeight - slot.minY),
+            y: stripFrame.minY + slot.minY,
             width: slot.width,
             height: slot.height
         )
@@ -679,9 +656,9 @@ struct TrackDetailOverlay: View {
         let flies = !expanded
         let target = flies ? (hasSource ? source : shrunk) : slotFrame
         let scale = target.width / slot.width
-        return TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 56))
+        return TrackArtwork(url: coverURL(for: track), symbolFont: .system(size: 72))
             .frame(width: slot.width, height: slot.height)
-            .clipShape(RoundedRectangle(cornerRadius: flies ? 8 / scale : 28, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: flies ? 8 / scale : artCorner, style: .continuous))
             .scaleEffect(scale)
             .position(x: target.midX, y: flies ? target.midY - dragOffset : target.midY)
             .opacity(flies && !hasSource ? 0 : 1)
@@ -695,16 +672,71 @@ struct TrackDetailOverlay: View {
             .allowsHitTesting(false)
     }
 
-    // MARK: Chrome
+    // MARK: Control card
+
+    /// The glass card under the artwork: heading, progress bar, transport.
+    /// Its surface rises and swells into place on the hero's spring and
+    /// the rows cascade in top to bottom. Its height is measured so a
+    /// short screen can size the artwork to what's left above it.
+    private func controls(for track: LibraryTrack) -> some View {
+        VStack(spacing: 0) {
+            heading(for: track)
+                .reveal(expanded, delay: TrackDetailMotion.headingDelay)
+
+            scrubber(for: track)
+                .padding(.top, 14)
+                .reveal(expanded, delay: TrackDetailMotion.scrubberDelay)
+
+            transport(for: track)
+                .padding(.top, 6)
+                .reveal(expanded, delay: TrackDetailMotion.transportDelay)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 22)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: cardCorner, style: .continuous)
+                .fill(surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: cardCorner, style: .continuous)
+                        .strokeBorder(edge, lineWidth: 1)
+                )
+                .reveal(expanded, rise: 28, scale: 0.96)
+        )
+        .overlay(alignment: .topTrailing) {
+            if track.owner == true {
+                Menu {
+                    Button {
+                        editingDetails = true
+                    } label: {
+                        Label("Edit Details", systemImage: "pencil")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.medium))
+                        // Explicit: a Menu label tints `.secondary` to the accent.
+                        .foregroundStyle(Color(.systemGray))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .padding(6)
+                .reveal(expanded, delay: TrackDetailMotion.transportDelay, rise: 0)
+            }
+        }
+        .background(GeometryReader { geometry in
+            Color.clear.preference(key: ControlsHeightsKey.self, value: [track.id: geometry.size.height])
+        })
+    }
 
     private func heading(for track: LibraryTrack) -> some View {
         let subtitle = byline(of: track)
-        return VStack(spacing: 6) {
+        return VStack(spacing: 4) {
             Text(track.title ?? "Untitled")
-                .font(.custom("ETBembo-SemiBoldOSF", size: 30, relativeTo: .title))
+                .font(.custom("ETBembo-SemiBoldOSF", size: 26, relativeTo: .title2))
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.85)
             if !subtitle.isEmpty {
                 Text(subtitle)
                     .font(.social(.body))
@@ -712,71 +744,73 @@ struct TrackDetailOverlay: View {
                     .multilineTextAlignment(.center)
                     .lineLimit(1)
             }
+            if let description = description(of: track) {
+                Text(description)
+                    .font(.social(.subheadline))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .padding(.top, 6)
+            }
         }
         .frame(maxWidth: .infinity)
         // Keep the title clear of the owner menu in the corner.
         .padding(.horizontal, 24)
     }
 
-    /// The real waveform doubling as a scrubber (flat bars until the levels
-    /// have decoded), with elapsed / total underneath. Its own 0-distance
-    /// drag wins over the card's drag, so scrubbing never moves the card.
+    /// A slim bar with elapsed on the left and time remaining on the
+    /// right. Its own 0-distance drag wins over the card's drag, so
+    /// scrubbing never moves the card.
     private func scrubber(for track: LibraryTrack) -> some View {
-        VStack(spacing: 12) {
-            PlayingWaveform(
-                levels: levels(track),
-                progress: progress(track),
-                onScrub: { fraction in
-                    guard !playbackBlocked else { return }
-                    if isLoaded(track) {
-                        player.seek(toFraction: fraction)
-                    } else {
-                        // Not loaded yet: a scrub just starts the track;
-                        // the seek has nowhere to land before metadata.
-                        player.toggle(track)
-                    }
-                },
-                isScrubbing: $isScrubbing
-            )
-            .frame(height: 44)
-
-            Text("\(AudioEditSheet.format(elapsed(track))) / \(AudioEditSheet.format(totalDuration(track)))")
-                .font(.social(.footnote))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-        }
+        ProgressScrubber(
+            progress: progress(track),
+            duration: totalDuration(track),
+            onScrub: { fraction in
+                guard !playbackBlocked else { return }
+                if isLoaded(track) {
+                    player.seek(toFraction: fraction)
+                } else {
+                    // Not loaded yet: a scrub just starts the track;
+                    // the seek has nowhere to land before metadata.
+                    player.toggle(track)
+                }
+            },
+            isScrubbing: $isScrubbing
+        )
     }
 
+    /// −15 s, play/pause, +15 s centred, big and bare; the audio-route
+    /// picker (AirPlay, headphones) sits at the trailing edge.
     private func transport(for track: LibraryTrack) -> some View {
         let loaded = isLoaded(track)
-        return HStack(spacing: 0) {
-            Spacer(minLength: 0)
+        return HStack(spacing: 26) {
             transportButton("gobackward.15", label: "Back 15 seconds") {
                 player.skip(by: -15)
             }
             .disabled(!loaded)
             .opacity(loaded ? 1 : 0.4)
-            Spacer(minLength: 0)
             Button {
                 TrackDetailHaptics.tap.impactOccurred()
                 player.toggle(track)
             } label: {
                 Image(systemName: isPlaying(track) ? "pause.fill" : "play.fill")
-                    .font(.system(size: 34, weight: .medium))
-                    .frame(width: 72, height: 72)
-                    .background(Color.primary.opacity(0.08))
-                    .clipShape(Circle())
-                    .contentShape(Circle())
+                    .font(.system(size: 40, weight: .medium))
+                    .frame(width: 72, height: 64)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(isPlaying(track) ? "Pause" : "Play")
-            Spacer(minLength: 0)
             transportButton("goforward.15", label: "Forward 15 seconds") {
                 player.skip(by: 15)
             }
             .disabled(!loaded)
             .opacity(loaded ? 1 : 0.4)
-            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .trailing) {
+            AudioRoutePicker()
+                .frame(width: 44, height: 44)
+                .accessibilityLabel("Audio output")
         }
         .disabled(playbackBlocked)
         .opacity(playbackBlocked ? 0.4 : 1)
@@ -788,8 +822,8 @@ struct TrackDetailOverlay: View {
             action()
         } label: {
             Image(systemName: symbol)
-                .font(.title2)
-                .frame(width: 56, height: 56)
+                .font(.system(size: 28, weight: .regular))
+                .frame(width: 48, height: 64)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -842,6 +876,7 @@ struct TrackDetailOverlay: View {
                 .reveal(expanded, delay: TrackDetailMotion.rightPillDelay, rise: 44, scale: 0.86)
             }
         }
+        .frame(height: pillHeight)
     }
 
     /// One pill's face: icon + bold label, centred, on the card's surface.
@@ -854,7 +889,7 @@ struct TrackDetailOverlay: View {
             .minimumScaleFactor(0.8)
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity)
-            .frame(height: 56)
+            .frame(height: pillHeight)
             .background(Capsule().fill(surface))
             .overlay(Capsule().strokeBorder(edge, lineWidth: 1))
             .contentShape(Capsule())
@@ -938,10 +973,8 @@ struct TrackDetailOverlay: View {
         for direction in PageDemoScript.swipes {
             let neighbour = direction < 0 ? nextTrack : previousTrack
             guard let neighbour, stripFrame.width > 0 else { continue }
-            let slot = slotFrames[current.id]
-                ?? CGRect(x: (stripFrame.width - 250) / 2, y: 0, width: 250, height: 250)
-            let pageHeight = pageHeights[current.id] ?? slot.maxY
-            let fingerY = stripFrame.maxY - (pageHeight - slot.minY) + slot.height * 0.62
+            guard let slot = slotFrames[current.id] else { continue }
+            let fingerY = stripFrame.minY + slot.minY + slot.height * 0.62
             let travel = CGFloat(direction) * pageStride * 0.45
             let start = CGPoint(x: stripFrame.midX - travel / 2, y: fingerY)
 
@@ -1045,4 +1078,78 @@ private extension View {
     func reveal(_ expanded: Bool, delay: Double = 0, rise: CGFloat = 16, scale: CGFloat = 1) -> some View {
         modifier(Reveal(expanded: expanded, delay: delay, rise: rise, scale: scale))
     }
+}
+
+/// A slim progress bar with elapsed on the left and remaining on the right,
+/// after the system player: drag (or tap) along it to scrub — the bar
+/// thickens under the finger and the readouts preview the position — and
+/// the seek lands on release.
+struct ProgressScrubber: View {
+    let progress: Double
+    let duration: TimeInterval
+    let onScrub: (Double) -> Void
+    @Binding var isScrubbing: Bool
+
+    /// Position under the finger while scrubbing, previewed before the seek.
+    @State private var scrubFraction: Double?
+
+    var body: some View {
+        let displayed = scrubFraction ?? progress
+        let elapsed = displayed * duration
+        HStack(spacing: 12) {
+            readout(AudioEditSheet.format(elapsed))
+            bar(displayed)
+                .frame(height: 24)
+            readout("−" + AudioEditSheet.format(max(0, duration - elapsed)))
+        }
+    }
+
+    private func readout(_ text: String) -> some View {
+        Text(text)
+            .font(.social(.footnote))
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .fixedSize()
+    }
+
+    private func bar(_ displayed: Double) -> some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.22))
+                Capsule().fill(Color.primary.opacity(0.85))
+                    .frame(width: max(6, displayed * width))
+            }
+            .frame(height: isScrubbing ? 10 : 6)
+            .frame(width: width, height: geometry.size.height)
+            .animation(.easeOut(duration: 0.15), value: isScrubbing)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        isScrubbing = true
+                        scrubFraction = min(max(value.location.x / width, 0), 1)
+                    }
+                    .onEnded { value in
+                        onScrub(min(max(value.location.x / width, 0), 1))
+                        scrubFraction = nil
+                        isScrubbing = false
+                    }
+            )
+        }
+    }
+}
+
+/// The system audio-route button (AirPlay, headphones, speaker), drawn in
+/// the secondary label colour so it reads as the card's quiet corner.
+struct AudioRoutePicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let view = AVRoutePickerView()
+        view.tintColor = .secondaryLabel
+        view.activeTintColor = .label
+        view.prioritizesVideoDevices = false
+        return view
+    }
+
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
