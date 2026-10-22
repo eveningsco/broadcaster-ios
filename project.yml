@@ -38,6 +38,9 @@ targets:
         NSCameraUsageDescription: Evenings broadcasts audio only and does not use the camera.
         UIBackgroundModes: [audio]
         UILaunchScreen: {}
+        # Force the dark palette app-wide (48094ea put this in Info.plist by
+        # hand; xcodegen regenerates that file, so it has to live here).
+        UIUserInterfaceStyle: Dark
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIAppFonts:
           - et-book-roman-line-figures.ttf

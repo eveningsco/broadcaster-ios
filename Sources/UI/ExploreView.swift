@@ -14,9 +14,6 @@ struct ExploreListView: View {
     @EnvironmentObject private var model: AppModel
     /// True while the home swipe-away gesture is engaged.
     var scrollLocked = false
-    /// The track detail card (owned by HomeView, which hosts the overlay);
-    /// tapping a cover sets it.
-    @Binding var detail: TrackDetailSelection?
 
     var body: some View {
         Group {
@@ -61,7 +58,6 @@ struct ExploreListView: View {
                 if !model.exploreTracks.isEmpty {
                     sectionHeader("Recent tracks")
                     ForEach(model.exploreTracks) { track in
-                        let heroID = TrackDetailSelection.heroID(list: .explore, track: track)
                         TrackRow(
                             track: track,
                             isPlaying: model.player.playingKey == TrackPlayer.key(for: track),
@@ -69,17 +65,7 @@ struct ExploreListView: View {
                             showsTags: true,
                             showsListens: false,
                             onSave: canSave(track) ? { save(track) } : nil,
-                            onShare: track.webURL != nil ? { copyLink(for: track) } : nil,
-                            onOpenDetails: { coverFrame in
-                                ExploreHaptics.select.impactOccurred()
-                                detail = TrackDetailSelection(track: track, list: .explore, sourceFrame: coverFrame)
-                            },
-                            heroID: heroID,
-                            // Hidden for the overlay's whole lifetime (not just while
-                            // expanded): on dismiss the home layer is still scaled
-                            // back from 0.94, so a cover shown here would pop in
-                            // off its spot and double the one flying home.
-                            coverHidden: detail?.heroID == heroID
+                            onShare: track.webURL != nil ? { copyLink(for: track) } : nil
                         )
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)
