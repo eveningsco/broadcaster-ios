@@ -14,8 +14,11 @@ targets:
   EveningsBroadcaster:
     type: application
     platform: iOS
-    # Shared scheme so CI can archive without Xcode auto-creating one.
-    scheme: {}
+    # Shared scheme so CI can archive without Xcode auto-creating one. The
+    # UI test target rides along so `build-for-testing` produces its runner.
+    scheme:
+      testTargets:
+        - EveningsUITests
     sources:
       - Sources
     dependencies:
@@ -57,3 +60,21 @@ targets:
         # User-visible product name; the target keeps its longer internal name
         # so the bundle ID stays co.evenings.EveningsBroadcaster.
         PRODUCT_NAME: Evenings
+  # Tap-driven recorded demos (UITests/Demos.swift) for the screenshot
+  # pipeline; never shipped, not part of the archive.
+  EveningsUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    dependencies:
+      - target: EveningsBroadcaster
+    info:
+      path: UITests/Info.plist
+      properties: {}
+    settings:
+      base:
+        TEST_TARGET_NAME: EveningsBroadcaster
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 3BBF83PB2F

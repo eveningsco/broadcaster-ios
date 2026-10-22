@@ -28,6 +28,8 @@ struct LibraryListView: View {
     /// tapping a cover sets it.
     @Binding var detail: TrackDetailSelection?
     @State private var draftPendingDelete: Draft?
+    /// The Files picker behind the empty state's Upload Audio button.
+    @State private var pickingFiles = false
 
     private var trimmedQuery: String {
         searchQuery.trimmingCharacters(in: .whitespaces)
@@ -51,13 +53,24 @@ struct LibraryListView: View {
             if model.library.isEmpty && model.isLoadingLibrary {
                 ProgressView("Loading library…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if model.library.isEmpty {
+            } else if model.library.isEmpty && uploads.drafts.isEmpty {
+                // Drafts count: a recording or import waiting to go up is
+                // the whole library for a new station.
                 emptyState
             } else {
                 trackList
             }
         }
         .scrollDisabled(scrollLocked)
+        .fileImporter(
+            isPresented: $pickingFiles,
+            allowedContentTypes: AudioImport.contentTypes,
+            allowsMultipleSelection: true
+        ) { result in
+            if case .success(let urls) = result {
+                model.importAudio(from: urls)
+            }
+        }
         .task {
             uploads.loadDrafts()
             await model.loadLibrary()
@@ -113,7 +126,7 @@ struct LibraryListView: View {
             }
         }
         .confirmationDialog(
-            "Delete recording?",
+            draftPendingDelete?.isImported == true ? "Remove file?" : "Delete recording?",
             isPresented: Binding(
                 get: { draftPendingDelete != nil },
                 set: { if !$0 { draftPendingDelete = nil } }
@@ -128,8 +141,10 @@ struct LibraryListView: View {
                 uploads.deleteDraft(draft)
             }
             Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("This recording only exists on this phone — deleting it cannot be undone.")
+        } message: { draft in
+            Text(draft.isImported
+                 ? "The copy waiting to upload is removed; the original file is untouched."
+                 : "This recording only exists on this phone — deleting it cannot be undone.")
         }
     }
 
@@ -145,6 +160,18 @@ struct LibraryListView: View {
 
                 if !filteredDrafts.isEmpty {
                     draftsSection
+                }
+
+                // A pick from the plus menu that couldn't be copied in
+                // (nothing to retry from a draft row, so say so here).
+                if let error = uploads.importError {
+                    Text(error)
+                        .font(.social(.footnote))
+                        .foregroundStyle(Color.eveningsRed)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
                 }
 
                 ForEach(filteredLibrary) { track in
@@ -243,10 +270,29 @@ struct LibraryListView: View {
                         .foregroundStyle(.secondary)
                     Text("No recordings yet")
                         .font(.social(.headline, weight: .bold))
-                    Text("Your broadcasts are recorded automatically and will show up here.")
+                    Text("Your broadcasts are recorded automatically and will show up here. You can also upload audio you already have.")
                         .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                    Button {
+                        LibraryHaptics.select.impactOccurred()
+                        pickingFiles = true
+                    } label: {
+                        Label("Upload Audio", systemImage: "square.and.arrow.up")
+                            .font(.social(.body, weight: .bold))
+                            .padding(.horizontal, 20)
+                            .frame(height: 44)
+                            .background(Capsule().fill(Color.primary.opacity(0.08)))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 8)
+                    if let error = uploads.importError {
+                        Text(error)
+                            .font(.social(.footnote))
+                            .foregroundStyle(Color.eveningsRed)
+                            .multilineTextAlignment(.center)
+                    }
                     if let error = model.libraryError {
                         Text(error)
                             .font(.social(.footnote))
@@ -511,7 +557,7 @@ struct DraftRow: View {
                 if isUploading {
                     ProgressView(value: uploadProgress)
                 } else {
-                    Text("Not in your library yet")
+                    Text(draft.isImported ? "Ready to upload" : "Not in your library yet")
                         .font(.social(.footnote))
                         .foregroundStyle(.secondary)
                 }

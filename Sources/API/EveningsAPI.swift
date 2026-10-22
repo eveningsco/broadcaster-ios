@@ -278,13 +278,31 @@ struct EveningsAPI {
         try check(response: response, data: data)
     }
 
+    /// The part's declared type, by extension — the server accepts any
+    /// `audio/*` and stores the canonical type for the extension anyway,
+    /// but a .wav announced as audio/mp4 is wrong on the wire. Unknown
+    /// extensions go up as octet-stream, which the server treats as
+    /// "decide by extension".
+    static func contentType(forFilename filename: String) -> String {
+        switch (filename as NSString).pathExtension.lowercased() {
+        case "m4a": return "audio/mp4"
+        case "mp3": return "audio/mpeg"
+        case "wav": return "audio/wav"
+        case "aif", "aiff": return "audio/aiff"
+        case "flac": return "audio/flac"
+        case "ogg": return "audio/ogg"
+        case "webm": return "audio/webm"
+        default: return "application/octet-stream"
+        }
+    }
+
     private func assembleMultipartBody(fileURL: URL, filename: String, boundary: String) throws -> URL {
         let bodyURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("upload-\(UUID().uuidString).tmp")
 
         var prefix = "--\(boundary)\r\n"
         prefix += "Content-Disposition: form-data; name=\"audio\"; filename=\"\(filename)\"\r\n"
-        prefix += "Content-Type: audio/mp4\r\n\r\n"
+        prefix += "Content-Type: \(Self.contentType(forFilename: filename))\r\n\r\n"
         let suffix = "\r\n--\(boundary)--\r\n"
 
         FileManager.default.createFile(atPath: bodyURL.path, contents: nil)

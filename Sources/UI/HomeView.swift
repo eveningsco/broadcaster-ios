@@ -38,6 +38,14 @@ struct HomeView: View {
     @State private var cardTab: CardTab = ScreenshotMode.scene == .explore ? .explore : .library
     /// The account sheet (station photo, name, sign out) from the header gear.
     @State private var showingAccount = ScreenshotMode.scene == .account
+    /// Which side the stage is on (Offline/Live). The plus menu under the
+    /// card sets it before revealing the stage; the stage's own picker can
+    /// still switch. Screenshot mode's `live` scene opens on the Live side
+    /// so the picker, badge and "End" button agree.
+    @State private var stageMode: BroadcastView.StageMode =
+        ScreenshotMode.scene == .live ? .live : .record
+    /// The Files picker behind the plus menu's Upload.
+    @State private var pickingFiles = false
     /// What a horizontal drag is moving: the whole card off the stage, or
     /// the tab strip inside the card (library ↔ explore). Locked when the
     /// drag engages so a mid-gesture direction reversal doesn't switch jobs.
@@ -96,7 +104,8 @@ struct HomeView: View {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
                             libraryShown = true
                         }
-                    }
+                    },
+                    mode: $stageMode
                 )
                 .padding(.top, geometry.safeAreaInsets.top)
                 .padding(.bottom, geometry.safeAreaInsets.bottom)
@@ -203,6 +212,15 @@ struct HomeView: View {
         .sheet(isPresented: $showingAccount) {
             AccountSheet()
         }
+        .fileImporter(
+            isPresented: $pickingFiles,
+            allowedContentTypes: AudioImport.contentTypes,
+            allowsMultipleSelection: true
+        ) { result in
+            if case .success(let urls) = result {
+                model.importAudio(from: urls)
+            }
+        }
         .onChange(of: libraryShown) { shown in
             HomeHaptics.snap.impactOccurred(intensity: 0.9)
             // Pause (don't stop) so the mini player is still there, loaded,
@@ -214,7 +232,10 @@ struct HomeView: View {
             // Live level meter while the stage is showing (mic check before
             // going live); release the mic when browsing. Starting/stopping
             // capture blocks the main thread long enough to drop frames, so
-            // wait for the slide animation to settle first.
+            // wait for the slide animation to settle first. Not in screenshot
+            // mode: the stage is posed there, and asking for the microphone
+            // would put a permission alert into a recorded demo.
+            guard !ScreenshotMode.isActive else { return }
             audioTransitionTask?.cancel()
             audioTransitionTask = Task {
                 try? await Task.sleep(nanoseconds: 450_000_000)
@@ -249,14 +270,26 @@ struct HomeView: View {
         VStack(spacing: 20) {
             libraryCard(safeArea: safeArea, width: width)
 
-            HomeBottomBar(player: model.player, isScrubbing: $isScrubbing) {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                    libraryShown = false
-                }
-            }
+            HomeBottomBar(
+                player: model.player,
+                isScrubbing: $isScrubbing,
+                onGoLive: { revealStage(.live) },
+                onRecord: { revealStage(.record) },
+                onUpload: { pickingFiles = true }
+            )
             .padding(.horizontal, 16)
         }
         .padding(.bottom, safeArea.bottom + 8)
+    }
+
+    /// Slides the library card away with the stage already on the chosen
+    /// side. The ring on the stage is still the commitment (Go Live /
+    /// Record), so there's a mic check between the menu and the air.
+    private func revealStage(_ mode: BroadcastView.StageMode) {
+        stageMode = mode
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+            libraryShown = false
+        }
     }
 
     /// Rows scroll edge to edge inside the card, fading out under the header
@@ -603,14 +636,17 @@ struct AccountButton: View {
     }
 }
 
-/// The go-live circle with, while a track is playing, a mini player to its
-/// right (artwork, title, pause). Observes the player directly so it appears
-/// and disappears with playback.
+/// The plus circle — a menu of the three ways to put something on your
+/// station: Go live, Record, Upload — with, while a track is playing, a
+/// mini player to its right (artwork, title, pause). Observes the player
+/// directly so the mini player appears and disappears with playback.
 struct HomeBottomBar: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var player: TrackPlayer
     @Binding var isScrubbing: Bool
-    let goLive: () -> Void
+    let onGoLive: () -> Void
+    let onRecord: () -> Void
+    let onUpload: () -> Void
 
     @StateObject private var waveform = WaveformLoader()
 
@@ -651,14 +687,42 @@ struct HomeBottomBar: View {
         return nil
     }
 
+    /// Go live and Record land on the stage's matching side; Upload opens
+    /// the Files picker over the library. The menu is system-drawn, so it
+    /// orders itself with the first item nearest the thumb when it pops up
+    /// from the bottom edge.
+    private var plusMenu: some View {
+        Menu {
+            Button(action: onGoLive) {
+                Label("Go live", systemImage: "dot.radiowaves.left.and.right")
+            }
+            Button(action: onRecord) {
+                Label("Record", systemImage: "record.circle")
+            }
+            Button(action: onUpload) {
+                Label("Upload", systemImage: "square.and.arrow.up")
+            }
+            .disabled(model.broadcast.state.isActive)
+        } label: {
+            Circle()
+                .fill(Color.eveningsRed)
+                .frame(width: barHeight, height: barHeight)
+                .overlay {
+                    Image(systemName: "plus")
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(.black)
+                }
+                .contentShape(Circle())
+        }
+        // Menu labels take the tint over foregroundStyle; keep the plus
+        // black on the orange (osebo, 2026-10-22).
+        .tint(.black)
+        .accessibilityLabel("Add to your station")
+    }
+
     var body: some View {
         HStack(spacing: 12) {
-            Button(action: goLive) {
-                Circle()
-                    .fill(Color.eveningsRed)
-                    .frame(width: barHeight, height: barHeight)
-            }
-            .buttonStyle(.plain)
+            plusMenu
 
             if let nowPlaying {
                 HStack(spacing: 12) {

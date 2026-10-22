@@ -26,9 +26,9 @@ struct BroadcastView: View {
     /// Slides the library card back over the stage (the button mirrors the
     /// leftward swipe).
     var onBack: (() -> Void)? = nil
-    // Screenshot mode's `live` scene opens on the Live side so the picker,
-    // badge and "End" button agree; every other launch starts Offline.
-    @State private var mode: StageMode = ScreenshotMode.scene == .live ? .live : .record
+    /// Offline (record) or Live. Owned by HomeView so the plus menu under
+    /// the library card can land the stage on the chosen side.
+    @Binding var mode: StageMode
     @State private var now = Date()
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()

@@ -61,6 +61,36 @@ fi
 # Tells the workflow's "Save build cache" step that DerivedData is worth keeping.
 touch build/.build-succeeded
 
+# --- Tap-driven demos --------------------------------------------------------
+# A `-demo` scene with a UI test in UITests/Demos.swift also needs the test
+# runner and an .xctestrun; an incremental build-for-testing on top of the
+# build above. Still-only runs skip this entirely.
+for scene in ${SCENES:-}; do
+  case "$scene" in *-demo) ;; *) continue ;; esac
+  grep -q "func test_${scene//-/_}()" UITests/Demos.swift 2>/dev/null || continue
+  echo "Building for testing ($scene is tap-driven)"
+  set +e
+  xcodebuild build-for-testing \
+    -project EveningsBroadcaster.xcodeproj \
+    -scheme EveningsBroadcaster \
+    -configuration Debug \
+    -destination 'generic/platform=iOS Simulator' \
+    -derivedDataPath build/DerivedData \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+    COMPILER_INDEX_STORE_ENABLE=NO \
+    2>&1 | tee build/xcodebuild-testing.log | grep -E 'error:|\*\* .*BUILD'
+  set -e
+  if ! grep -q '\*\* TEST BUILD SUCCEEDED \*\*' build/xcodebuild-testing.log; then
+    cat build/xcodebuild-testing.log >> build/xcodebuild.log
+    echo "::error::xcodebuild build-for-testing failed; see the xcodebuild-log artifact" >&2
+    exit 1
+  fi
+  XCTESTRUN=$(ls -t build/DerivedData/Build/Products/*.xctestrun | head -1)
+  export XCTESTRUN
+  echo "XCTESTRUN=$XCTESTRUN"
+  break
+done
+
 # --- Capture -----------------------------------------------------------------
 scripts/simulator-screenshots.sh \
   build/DerivedData/Build/Products/Debug-iphonesimulator/Evenings.app \

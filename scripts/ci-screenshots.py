@@ -10,6 +10,7 @@ and download the PNGs — from any machine with python3 and a GitHub token
     GH_TOKEN=... scripts/ci-screenshots.py --run 37172713333   # attach to an existing run
     GH_TOKEN=... scripts/ci-screenshots.py --scenes edit-demo    # ~18 s recording as animated PNG
     GH_TOKEN=... scripts/ci-screenshots.py --scenes track-demo   # cover tap → detail card hero transition
+    GH_TOKEN=... scripts/ci-screenshots.py --scenes plus-demo    # plus menu, driven by a UI test (real taps)
 
 Every run is a macOS job billed at 10x, and the build (~6-12 min) costs far
 more than the scenes (~5-10 s per still), so the script works hard to not
@@ -56,7 +57,7 @@ SCENE_MAP = os.path.join(HERE, "ci", "screenshot-scenes.txt")
 
 # Keep in step with ScreenshotMode.Scene (Sources/Debug/ScreenshotMode.swift).
 STILLS = ["login", "signup", "library", "explore", "account", "edit", "track", "stage", "live"]
-DEMOS = ["edit-demo", "track-demo", "page-demo"]
+DEMOS = ["edit-demo", "track-demo", "page-demo", "plus-demo"]
 
 COOLDOWN = dt.timedelta(minutes=float(os.environ.get("SCREENSHOTS_COOLDOWN_MIN", 15)))
 DAILY_MAX = int(os.environ.get("SCREENSHOTS_DAILY_MAX", 10))

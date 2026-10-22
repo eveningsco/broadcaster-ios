@@ -6,6 +6,7 @@ With it, you can:
 
 - **Go live** over RTMP from the built-in mic or a connected USB/Lightning interface, and keep broadcasting with the phone locked.
 - **Record** a show offline and upload it to your library once you're back online.
+- **Upload** audio you already have (`.mp3`, `.m4a`, `.wav`, `.aif`, `.flac`, `.ogg`) from the Files app, iCloud Drive or any file provider.
 - **Browse** your library and the Explore feed of live channels and published shows across Evenings.
 - **Edit** your tracks: trim them, or change their tempo.
 
@@ -30,6 +31,7 @@ Simulator builds work, but the simulator's microphone pipeline is unreliable, so
 - **Capture.** `AVAudioSession` runs in `.playAndRecord` at a preferred 48 kHz, with an `AVAudioEngine` input tap. A connected interface becomes the active input automatically, and the same tap drives the level meter.
 - **Going live.** HaishinKit publishes AAC at 192 kbps over RTMP. That matches the Evenings desktop broadcaster's settings, so the media server treats a phone like any other encoder. The `audio` background mode keeps the broadcast going when the phone locks.
 - **Recording.** Record mode writes the same 192 kbps AAC to an `.m4a` file on the phone, at up to 48 kHz, and uploads it to your library (`POST /v1/tracks`) when you stop. If the upload fails or you're offline, the file stays on the phone as a draft until it can go up.
+- **Uploading.** The plus circle under the library card opens a menu — Go live, Record, Upload. Go live and Record reveal the stage on the matching side (the ring on the stage is still what starts anything, so there's a mic check first); Upload, like "Upload Audio" in an empty library, opens the system file picker. Picked files are copied into `Documents/recordings/imports` and go up through the same draft flow as recordings, one at a time, so a pick made offline waits in the library's "On this phone" section with a retry. The accepted formats mirror the API server's upload filter; the file is sent as is (no re-encode), titled with its filename minus the extension.
 
 ### When the connection drops
 
@@ -58,10 +60,11 @@ Sources/
     RecordingController.swift  Offline recording to .m4a
     AACBufferWriter.swift      PCM → AAC file writer (handles inputs above 48 kHz)
     Faststart.swift            Moves the moov atom up front so the server can read duration
-    UploadManager.swift        Uploads recordings; keeps failed ones as drafts
+    UploadManager.swift        Uploads recordings and imported files; keeps
+                               failed ones as drafts
   UI/
-    HomeView.swift             Library card over the broadcast stage, tabs, mini player
-    BroadcastView.swift        The stage: Go Live and Record, timer, listener count, level ring
+    HomeView.swift             Library card over the broadcast stage, tabs, plus menu, mini player
+    BroadcastView.swift        The stage: Go Live and Record ring, timer, level meter
     LibraryView.swift          Your tracks and the ones you've saved
     ExploreView.swift          Live channels and published tracks across Evenings
     TrackDetailView.swift      Track detail card (cover, scrubber, share, edit)
@@ -75,11 +78,14 @@ Sources/
     Typography.swift           ABC Social with Dynamic Type
   Debug/
     ScreenshotMode.swift       Debug-only fixture scenes for screenshots
+    TouchSpotlight.swift       Debug-only fingertip at each touch, for recorded demos
+UITests/
+  Demos.swift                  Tap-driven demo recordings (XCUITest) for the screenshot pipeline
 ```
 
 ## Screenshots
 
-You can see every screen without a Mac: a GitHub Actions workflow builds the app, runs it in a simulator, and captures each scene, including short recordings of the editor and track card in motion. [docs/screenshots.md](docs/screenshots.md) covers how to start a run, the scene list, and how we keep macOS build minutes down.
+You can see every screen without a Mac: a GitHub Actions workflow builds the app, runs it in a simulator, and captures each scene, including short recordings of the editor, track card and plus menu in motion. [docs/screenshots.md](docs/screenshots.md) covers how to start a run, the scene list, and how we keep macOS build minutes down.
 
 ## TestFlight builds
 
