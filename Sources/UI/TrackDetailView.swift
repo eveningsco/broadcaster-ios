@@ -715,7 +715,8 @@ struct TrackDetailOverlay: View {
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.body.weight(.medium))
-                        .foregroundStyle(.secondary)
+                        // Explicit: a Menu label tints `.secondary` to the accent.
+                        .foregroundStyle(Color(.systemGray))
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
