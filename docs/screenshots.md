@@ -36,6 +36,9 @@ Scenes ending in `-demo` animate instead of posing, and the capture script recor
 - `edit-demo`: the editor trims, auditions and re-speeds a track by itself, with a ghost fingertip.
 - `track-demo`: a track's cover flies out of its row into the detail card, which is then dismissed. It runs at half speed so the roughly 15 fps CI simulator catches the motion.
 - `page-demo`: `track-demo`, then the open card pages sideways to the next tracks and back before it's dismissed.
+- `plus-demo`: the plus circle under the library opens its menu; Record and Go live reveal the stage on the matching side, Upload opens the Files picker.
+
+The first three animate themselves (the scene scripts a tween and a ghost fingertip). `plus-demo` can't: a system menu only opens for a real tap. So it is driven by an XCUITest (`UITests/Demos.swift`, `test_plus_demo`), which the capture script runs with `xcodebuild test-without-building` while the recorder is on; the CI job adds an incremental `build-for-testing` only when such a scene is requested. The app, launched with `-show-touches 1`, draws the same fingertip wherever the test touches (`Sources/Debug/TouchSpotlight.swift`). Any `-demo` scene with a `test_<scene>` method (dashes to underscores) is driven this way, so add tap-driven demos there rather than scripting them in the views.
 
 `docs/screenshots/` holds reference captures and `docs/videos/` reference recordings.
 
@@ -46,7 +49,7 @@ Every run is a macOS job, which GitHub bills at 10x the Linux rate, and the buil
 | Rule | What happens |
 | --- | --- |
 | Auto scenes (default) | Captures only the scenes touched by changes since the branch's last full run. `scripts/ci/screenshot-scenes.txt` maps files to scenes, and a file that isn't listed counts as every scene. If nothing visual changed, no run starts. |
-| Recordings opt-in | `-demo` scenes (30–60 seconds each) only run when named with `--scenes`. |
+| Recordings opt-in | `-demo` scenes (30–90 seconds each) only run when named with `--scenes`. |
 | Reuse | If a successful run of the same commit, device and appearance already covered the scenes, it downloads those results instead of starting a run. |
 | Coalesce | If a run for the branch is queued or running, it waits for it, then starts one follow-up run for anything pushed in the meantime. The workflow's `concurrency` group applies the same rule to runs started by hand. |
 | Throttle | At most one new run per branch every 15 minutes and 10 per branch per 24 hours (`SCREENSHOTS_COOLDOWN_MIN`, `SCREENSHOTS_DAILY_MAX`). When throttled it exits with status **3**: keep working and fold the next changes into one later run. `--force` skips the throttle. |

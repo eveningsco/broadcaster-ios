@@ -78,11 +78,14 @@ Sources/
     Typography.swift           ABC Social with Dynamic Type
   Debug/
     ScreenshotMode.swift       Debug-only fixture scenes for screenshots
+    TouchSpotlight.swift       Debug-only fingertip at each touch, for recorded demos
+UITests/
+  Demos.swift                  Tap-driven demo recordings (XCUITest) for the screenshot pipeline
 ```
 
 ## Screenshots
 
-You can see every screen without a Mac: a GitHub Actions workflow builds the app, runs it in a simulator, and captures each scene, including short recordings of the editor and track card in motion. [docs/screenshots.md](docs/screenshots.md) covers how to start a run, the scene list, and how we keep macOS build minutes down.
+You can see every screen without a Mac: a GitHub Actions workflow builds the app, runs it in a simulator, and captures each scene, including short recordings of the editor, track card and plus menu in motion. [docs/screenshots.md](docs/screenshots.md) covers how to start a run, the scene list, and how we keep macOS build minutes down.
 
 ## TestFlight builds
 
