@@ -38,7 +38,10 @@ final class Demos: XCTestCase {
         plus.tap()
         pause(2.4)
         menuItem(app, "Upload").tap()
-        pause(5)
+        // The Files picker is another process's view; the CI simulator
+        // takes several seconds to draw it, and the app is killed when the
+        // test returns.
+        pause(12)
     }
 
     /// The hittable element with this label. The stage behind the library
